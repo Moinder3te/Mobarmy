@@ -33,16 +33,18 @@ public final class ArenaDimension {
     }
 
     /**
-     * Lock the arena dimension to permanent noon and disable weather/mob
-     * spawning so the arenas stay visually bright and free of intruders.
-     * Safe to call multiple times — gamerules are idempotent.
+     * Lock down the arena dimension for combat: disable natural spawns, mob
+     * griefing, tile drops, raids, etc. Safe to call multiple times.
+     *
+     * Time and skylight are handled by the custom dimension type
+     * ({@code data/mobarmy/dimension_type/arena.json}) which has
+     * {@code has_skylight: false} and {@code has_fixed_time: true}, so undead
+     * mobs can NEVER burn regardless of gamerule state.
      *
      * SAFETY: Falls die Arena-Dimension nicht geladen ist (Datapack fehlt o.ä.),
      * wird {@link #get(MinecraftServer)} auf die Overworld zurückfallen. Damit
-     * wir nicht versehentlich Spielregeln wie KEEP_INVENTORY oder
-     * DO_IMMEDIATE_RESPAWN auf die Lobby/Overworld anwenden, machen wir hier
-     * eine harte Identitäts-Prüfung und brechen ab wenn das übergebene World
-     * NICHT die echte Arena-Dimension ist.
+     * wir nicht versehentlich Spielregeln auf die Lobby/Overworld anwenden,
+     * machen wir eine harte Identitäts-Prüfung.
      */
     public static void applyGameRules(ServerWorld w) {
         if (w == null) return;
@@ -51,30 +53,26 @@ public final class ArenaDimension {
             return;
         }
         try {
-            // Permanent night — undead mobs don't burn.
-            w.setTimeOfDay(18000L); // midnight
             GameRules gr = w.getGameRules();
             MinecraftServer s = w.getServer();
-            gr.setValue(GameRules.ADVANCE_TIME, false, s);
-            gr.setValue(GameRules.ADVANCE_WEATHER, false, s);
+            // --- Spawn control ---
             gr.setValue(GameRules.DO_MOB_SPAWNING, false, s);
             gr.setValue(GameRules.SPAWN_MONSTERS, false, s);
             gr.setValue(GameRules.SPAWN_PATROLS, false, s);
             gr.setValue(GameRules.SPAWN_PHANTOMS, false, s);
             gr.setValue(GameRules.SPAWN_WANDERING_TRADERS, false, s);
-            gr.setValue(GameRules.DO_MOB_GRIEFING, false, s);
-            gr.setValue(GameRules.DO_TILE_DROPS, false, s);
             gr.setValue(GameRules.SPAWNER_BLOCKS_WORK, false, s);
             gr.setValue(GameRules.DISABLE_RAIDS, true, s);
-            // Spieler dürfen sterben ohne Inventar zu verlieren — der
-            // Respawnpunkt wird per BattleController auf den Team-Spawn
-            // gesetzt, sodass Vanilla-Death + Totem reibungslos funktionieren.
+            // --- Combat / arena rules ---
+            gr.setValue(GameRules.DO_MOB_GRIEFING, false, s);
+            gr.setValue(GameRules.DO_TILE_DROPS, false, s);
             gr.setValue(GameRules.KEEP_INVENTORY, true, s);
-            // Sofort-Respawn: kein Death-Screen, Spieler poppt direkt am
-            // gesetzten Team-Spawnpunkt wieder auf.
             gr.setValue(GameRules.DO_IMMEDIATE_RESPAWN, true, s);
-            // Clear any leftover weather state.
-            w.setWeather(0, 0, false, false);
+            // --- Mob anger persistence ---
+            // Mobs stay angry even after a player dies and respawns.
+            gr.setValue(GameRules.FORGIVE_DEAD_PLAYERS, false, s);
+            // All neutral mobs attack all players, not just the provoker.
+            gr.setValue(GameRules.UNIVERSAL_ANGER, true, s);
         } catch (Throwable ignored) {
             // Older mappings: silently skip if a rule is missing.
         }

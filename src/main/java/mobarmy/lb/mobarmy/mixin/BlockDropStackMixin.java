@@ -5,6 +5,8 @@ import mobarmy.lb.mobarmy.game.GamePhase;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.BlockItem;
@@ -141,6 +143,8 @@ public abstract class BlockDropStackMixin {
         if (t[0] >= 0) t[0]++;
         ItemStack swap = mobarmy$swap(stack);
         if (swap == null) return;
+        // Spill container contents (shulker boxes) before replacing the drop.
+        mobarmy$spillContents(world, pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, stack);
         ItemEntity ie = new ItemEntity(world,
             pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, swap);
         ie.setToDefaultPickupDelay();
@@ -162,6 +166,8 @@ public abstract class BlockDropStackMixin {
         double x = pos.getX() + 0.5 + dir.getOffsetX() * 0.5;
         double y = pos.getY() + 0.5 + dir.getOffsetY() * 0.5;
         double z = pos.getZ() + 0.5 + dir.getOffsetZ() * 0.5;
+        // Spill container contents (shulker boxes) before replacing the drop.
+        mobarmy$spillContents(world, x, y, z, stack);
         ItemEntity ie = new ItemEntity(world, x, y, z, swap);
         ie.setToDefaultPickupDelay();
         ie.setVelocity(dir.getOffsetX() * 0.1, dir.getOffsetY() * 0.1, dir.getOffsetZ() * 0.1);
@@ -169,21 +175,50 @@ public abstract class BlockDropStackMixin {
         ci.cancel();
     }
 
-    /** Liefert den randomisierten Drop oder {@code null} wenn nichts zu tun ist. */
+    /** Liefert den randomisierten Drop oder {@code null} wenn nichts zu tun ist.
+     *  Nutzt den QUELL-Block (mobarmy$trackedBlock) für den Lookup, nicht das
+     *  gedropte Item — so bekommen Grass Block und Dirt unterschiedliche Ergebnisse,
+     *  auch wenn beide vanilla-mäßig Dirt droppen. */
     @Unique
     private static ItemStack mobarmy$swap(ItemStack stack) {
         MobarmyMod mod = MobarmyMod.INSTANCE;
         if (mod == null || mod.gameManager == null) return null;
         if (!mod.gameManager.isPhase(GamePhase.FARM)) return null;
         if (stack == null || stack.isEmpty()) return null;
+
+        // Primär: den gebrochenen Block verwenden (gesetzt in beginTracking).
+        Block sourceBlock = mobarmy$trackedBlock.get();
+        if (sourceBlock != null && mod.randomizer.has(sourceBlock)) {
+            ItemStack mapped = mod.randomizer.getDrop(sourceBlock);
+            if (mapped.isEmpty()) return null;
+            ItemStack swap = mapped.copy();
+            swap.setCount(stack.getCount());
+            return swap;
+        }
+
+        // Fallback für standalone dropStack-Aufrufe außerhalb von dropStacks:
+        // Nur BlockItems randomisieren.
         if (!(stack.getItem() instanceof BlockItem bi)) return null;
         if (!mod.randomizer.has(bi.getBlock())) return null;
-
         ItemStack mapped = mod.randomizer.getDrop(bi.getBlock());
         if (mapped.isEmpty()) return null;
         ItemStack swap = mapped.copy();
         swap.setCount(stack.getCount());
         return swap;
+    }
+
+    /** If the stack has container contents (e.g. shulker box), spawn each
+     *  contained item as a separate ItemEntity at the given position. */
+    @Unique
+    private static void mobarmy$spillContents(World world, double x, double y, double z, ItemStack stack) {
+        ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+        if (container == null) return;
+        for (ItemStack contained : container.iterateNonEmpty()) {
+            if (contained.isEmpty()) continue;
+            ItemEntity ie = new ItemEntity(world, x, y, z, contained.copy());
+            ie.setToDefaultPickupDelay();
+            world.spawnEntity(ie);
+        }
     }
 }
 

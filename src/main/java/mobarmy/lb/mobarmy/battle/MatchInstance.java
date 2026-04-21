@@ -34,8 +34,10 @@ public class MatchInstance {
     public boolean waitingForWave = false;
     public boolean finished = false;
 
-    /** Countdown ticks until the first wave spawns (dramatic pause). */
-    private int startCountdown = 60;
+    /** Countdown ticks until the first wave spawns.
+     *  Needs to be long enough for the client to finish loading arena chunks
+     *  after the dimension teleport (prevents "Timed out" kick). */
+    private int startCountdown = 200; // 10 seconds
     /** Ticks until next wave after previous wave cleared. */
     private int nextWaveDelay = 0;
     /** Whether we've already broadcast the wipe / victory message. */
@@ -97,9 +99,27 @@ public class MatchInstance {
     }
 
     private void startWave(ServerWorld world, MobarmyMod mod) {
-        if (waveIndex >= defender.waves.size()) { finished = true; return; }
+        if (waveIndex >= defender.waves.size()) {
+            MobarmyMod.LOG.warn("[Battle] {} vs {}: waveIndex {} >= waves.size {} — finishing match",
+                attacker.name, defender.name, waveIndex, defender.waves.size());
+            finished = true;
+            return;
+        }
         List<EntityType<?>> mobs = defender.waves.get(waveIndex);
+        if (mobs.isEmpty()) {
+            MobarmyMod.LOG.warn("[Battle] {} vs {}: wave {} is empty — skipping",
+                attacker.name, defender.name, waveIndex);
+            waveIndex++;
+            if (waveIndex >= mod.config.waveCount || waveIndex >= defender.waves.size()) {
+                finished = true;
+                return;
+            }
+            nextWaveDelay = 1; // retry next wave on next tick
+            return;
+        }
         List<ServerPlayerEntity> targets = onlineAttackers(world.getServer());
+        MobarmyMod.LOG.info("[Battle] {} vs {}: starting wave {} with {} mobs, {} targets",
+            attacker.name, defender.name, waveIndex + 1, mobs.size(), targets.size());
         for (ServerPlayerEntity p : targets) {
             PlayerUtils.title(p,
                 Text.literal("WELLE " + (waveIndex + 1)).formatted(Formatting.RED, Formatting.BOLD),

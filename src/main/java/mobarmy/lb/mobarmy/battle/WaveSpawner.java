@@ -35,7 +35,7 @@ public class WaveSpawner {
      *  it as an intruder. */
     public static final String WAVE_TAG = "mobarmy_wave";
 
-    public final Set<UUID> aliveMobs = new HashSet<>();
+    public final Set<UUID> aliveMobs = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Mobs die noch gespawnt werden müssen (gestaffelt, nicht alle auf einmal). */
     private final Deque<EntityType<?>> pending = new ArrayDeque<>();
@@ -77,16 +77,20 @@ public class WaveSpawner {
         Random rng = world.getRandom();
         int budget = Math.max(1, cfg.mobSpawnsPerTick);
         int max = Math.max(1, cfg.maxAliveMobs);
-        int spread = Math.max(1, cfg.mobSpawnRadius);
+        // Spread mobs across the whole arena floor, not just a tiny cluster.
+        // Use ~60% of the arena radius so mobs don't spawn inside the walls.
+        int spread = Math.max(4, (int)(pendingArena.radius * 0.6));
         BlockPos center = pendingArena.mobSpawnCenter;
 
         while (budget-- > 0 && !pending.isEmpty() && aliveMobs.size() < max) {
             EntityType<?> type = pending.poll();
             if (type == null) continue;
-            BlockPos pos = center.add(
-                rng.nextInt(spread * 2 + 1) - spread,
-                0,
-                rng.nextInt(spread * 2 + 1) - spread);
+            // Random position within a circle (not a square) to match cylindrical arena.
+            double angle = rng.nextDouble() * Math.PI * 2;
+            double dist = Math.sqrt(rng.nextDouble()) * spread; // sqrt for uniform distribution
+            int dx = (int) Math.round(Math.cos(angle) * dist);
+            int dz = (int) Math.round(Math.sin(angle) * dist);
+            BlockPos pos = center.add(dx, 0, dz);
 
             // Dezenter Spawn-FX pro Mob (kein Lightning mehr — sonst blendet's
             // bei großen Wellen total).
@@ -104,6 +108,18 @@ public class WaveSpawner {
             if (ent instanceof MobEntity mob) {
                 mob.setPersistent();
                 mob.setCanPickUpLoot(false);
+                // Boost follow range so mobs don't lose targets in the arena.
+                var followAttr = mob.getAttributeInstance(
+                    net.minecraft.entity.attribute.EntityAttributes.FOLLOW_RANGE);
+                if (followAttr != null && followAttr.getBaseValue() < 48.0) {
+                    followAttr.setBaseValue(48.0);
+                }
+                // Fire resistance — prevents accidental fire/lava deaths in arena.
+                if (ent instanceof LivingEntity living) {
+                    living.addStatusEffect(new net.minecraft.entity.effect.StatusEffectInstance(
+                        net.minecraft.entity.effect.StatusEffects.FIRE_RESISTANCE,
+                        Integer.MAX_VALUE, 0, true, false, false));
+                }
                 if (!pendingTargets.isEmpty()) {
                     mob.setTarget(pendingTargets.get(rng.nextInt(pendingTargets.size())));
                 }

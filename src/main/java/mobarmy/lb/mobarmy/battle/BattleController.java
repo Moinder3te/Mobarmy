@@ -65,7 +65,7 @@ public class BattleController {
     }
 
     public int round() { return round; }
-    public List<MatchInstance> matches() { return currentMatches; }
+    public List<MatchInstance> matches() { return List.copyOf(currentMatches); }
 
     public boolean finished() {
         return round >= teams.size() - 1 && currentMatches.isEmpty() && !waitingForNextRound;
@@ -89,6 +89,10 @@ public class BattleController {
             mod.scheduler.schedule(20, mod.gameManager::finishGame);
             return;
         }
+
+        // Chunks are already force-loaded from arena build/prepare phase.
+        // No need to force-load here — they've been streaming to clients
+        // throughout FARM and ARRANGE phases.
 
         startRound(0);
     }
@@ -145,42 +149,18 @@ public class BattleController {
     }
 
     /**
-     * Lightweight arena reset between rounds: removes everything the players or
-     * waves left behind, without touching the arena structure.
-     *  1. Discard every non-player entity inside the arena box (items, stray mobs).
-     *  2. Replace any block inside the arena bounding box that isn't part of the
-     *     built structure (i.e. not tracked in {@link ArenaProtection}) with AIR.
-     *     This wipes player-placed blocks without iterating the whole volume —
-     *     we only touch non-protected positions.
+     * Lightweight arena reset between rounds: removes all non-player entities
+     * inside the arena (items, stray mobs, arrows, XP orbs). Block cleanup is
+     * skipped — with doTileDrops=false and keepInventory=true, player-placed
+     * blocks are harmless and iterating ~3.5M positions would crash the server.
      */
     private void cleanArenaInterior(Arena arena) {
-        // 1) Entities (items, mobs) — cheap AABB query.
         Box box = arena.box();
         List<Entity> toDiscard = new ArrayList<>();
         for (Entity e : world.getEntitiesByClass(Entity.class, box, e -> !(e instanceof PlayerEntity))) {
             toDiscard.add(e);
         }
         for (Entity e : toDiscard) e.discard();
-
-        // 2) Non-protected blocks inside the bounding box.
-        //    Protected positions (floor, walls, ceiling, pillars, pads, death-room)
-        //    are skipped, so structure stays intact. Only player builds + random
-        //    leftovers get cleared.
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        BlockPos minP = arena.minCorner(), maxP = arena.maxCorner();
-        int minX = minP.getX(), maxX = maxP.getX();
-        int minY = minP.getY(), maxY = maxP.getY();
-        int minZ = minP.getZ(), maxZ = maxP.getZ();
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int y = minY; y <= maxY; y++) {
-                    pos.set(x, y, z);
-                    if (ArenaProtection.isProtected(pos)) continue;
-                    if (world.getBlockState(pos).isAir()) continue;
-                    world.setBlockState(pos, Blocks.AIR.getDefaultState(), 3);
-                }
-            }
-        }
     }
 
     public void tick() {
@@ -195,11 +175,52 @@ public class BattleController {
         }
         if (world.getServer().getTicks() % 20 == 0) {
             for (MatchInstance m : currentMatches) m.purgeIntruders(world);
+            // === CRITICAL: Purge stale mob UUIDs every second ===
+            // If a mob dies without triggering AFTER_DEATH (void, discard,
+            // chunk unload, despawn), its UUID stays in aliveMobs forever
+            // and the wave is NEVER considered cleared. Fix: remove any UUID
+            // where the entity no longer exists or is dead.
+            for (MatchInstance m : currentMatches) {
+                m.spawner.aliveMobs.removeIf(uuid -> {
+                    net.minecraft.entity.Entity e = world.getEntity(uuid);
+                    return e == null || !e.isAlive() || e.isRemoved();
+                });
+            }
+            // === Retarget mobs every second (not every 5s) ===
+            // Mobs lose their target when a player dies and respawns, or when
+            // they wander too far. Frequent retargeting keeps them aggressive.
+            for (MatchInstance m : currentMatches) {
+                if (m.finished) continue;
+                // Only target alive players inside the arena — not dead/respawning ones.
+                List<ServerPlayerEntity> validTargets = new ArrayList<>();
+                for (ServerPlayerEntity p : m.onlineAttackers(world.getServer())) {
+                    if (p.isAlive() && !p.isSpectator() && m.arena.contains(p.getX(), p.getY(), p.getZ())) {
+                        validTargets.add(p);
+                    }
+                }
+                if (validTargets.isEmpty()) continue;
+                for (UUID mobId : m.spawner.aliveMobs) {
+                    net.minecraft.entity.Entity e = world.getEntity(mobId);
+                    if (e == null) continue;
+                    ServerPlayerEntity target = validTargets.get(
+                        world.getRandom().nextInt(validTargets.size()));
+                    // Re-target mobs that lost their target.
+                    if (e instanceof net.minecraft.entity.mob.MobEntity mob) {
+                        if (mob.getTarget() == null || !mob.getTarget().isAlive()) {
+                            mob.setTarget(target);
+                        }
+                    }
+                    // Refresh anger on neutral mobs.
+                    if (e instanceof net.minecraft.entity.mob.Angerable angerable) {
+                        if (!angerable.hasAngerTime()) {
+                            angerable.universallyAnger();
+                            angerable.setTarget(target);
+                        }
+                    }
+                }
+            }
         }
-        // Re-apply Night Vision every 5s (lasts 12s with overlap) to every
-        // attacker — guarantees the arena interior is always perfectly visible
-        // even if the LIGHT-block grid leaves a tiny gap somewhere.
-        // Also refresh Warden anger so they never burrow.
+        // Re-apply Night Vision every 5s and keep Wardens from burrowing.
         if (world.getServer().getTicks() % 100 == 0) {
             for (MatchInstance m : currentMatches) {
                 for (UUID u : m.attacker.members) {
@@ -210,27 +231,12 @@ public class BattleController {
                         260, 0, true, false, true));
                 }
                 // Keep Wardens angry so they never burrow.
-                // Also refresh all neutral mob anger so they never become passive.
                 for (UUID mobId : m.spawner.aliveMobs) {
                     net.minecraft.entity.Entity e = world.getEntity(mobId);
-                    if (e == null) continue;
-                    List<ServerPlayerEntity> attackers = m.onlineAttackers(world.getServer());
-                    if (attackers.isEmpty()) continue;
-                    ServerPlayerEntity target = attackers.get(0);
-
                     if (e instanceof net.minecraft.entity.mob.WardenEntity warden) {
-                        warden.increaseAngerAt(target, 150, false);
-                    }
-                    if (e instanceof net.minecraft.entity.mob.Angerable angerable) {
-                        angerable.universallyAnger();
-                        if (angerable.getTarget() == null) {
-                            angerable.setTarget(target);
-                        }
-                    }
-                    // Re-target any mob that lost its target (died/disconnected).
-                    if (e instanceof net.minecraft.entity.mob.MobEntity mob) {
-                        if (mob.getTarget() == null || !mob.getTarget().isAlive()) {
-                            mob.setTarget(target);
+                        List<ServerPlayerEntity> attackers = m.onlineAttackers(world.getServer());
+                        if (!attackers.isEmpty()) {
+                            warden.increaseAngerAt(attackers.get(0), 150, false);
                         }
                     }
                 }
@@ -312,6 +318,8 @@ public class BattleController {
     }
 
     private void finish() {
+        // Release force-loaded chunks.
+        for (Arena a : teamArenas) a.unforceLoadChunks(world);
         mod.scheduler.schedule(40, mod.gameManager::finishGame);
     }
 

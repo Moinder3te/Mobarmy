@@ -1,7 +1,9 @@
 package mobarmy.lb.mobarmy.util;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 
 public class TaskScheduler {
     private record Task(long runAtTick, Runnable r) {}
@@ -15,13 +17,19 @@ public class TaskScheduler {
 
     public void tick() {
         currentTick++;
+        // Collect due tasks first, then run — avoids ConcurrentModificationException
+        // if a running task calls schedule() (which adds to the same deque).
+        List<Runnable> ready = new ArrayList<>();
         var it = tasks.iterator();
         while (it.hasNext()) {
             Task t = it.next();
             if (t.runAtTick <= currentTick) {
                 it.remove();
-                try { t.r.run(); } catch (Throwable th) { th.printStackTrace(); }
+                ready.add(t.r);
             }
+        }
+        for (Runnable r : ready) {
+            try { r.run(); } catch (Throwable th) { th.printStackTrace(); }
         }
     }
 

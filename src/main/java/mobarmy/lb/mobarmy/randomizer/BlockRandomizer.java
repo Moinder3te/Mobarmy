@@ -1,6 +1,7 @@
 package mobarmy.lb.mobarmy.randomizer;
 
 import net.minecraft.block.*;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
@@ -9,8 +10,9 @@ import net.minecraft.util.Identifier;
 import java.util.*;
 
 /**
- * Deterministic, seed-based 1:1 permutation of all "natural" blocks.
- * Breaking block X always drops the item form of mapped block Y.
+ * Deterministic, seed-based randomizer.
+ * Each eligible source block is mapped to a random item from the full
+ * Minecraft item registry (blocks, tools, food, materials — everything).
  */
 public class BlockRandomizer {
     private final Map<Block, ItemStack> mapping = new IdentityHashMap<>();
@@ -22,22 +24,24 @@ public class BlockRandomizer {
         this.seed = seed;
         mapping.clear();
 
+        // --- source blocks (what you can break) ---
         List<Block> sources = new ArrayList<>();
         for (Block b : Registries.BLOCK) {
-            if (isEligible(b)) sources.add(b);
+            if (isEligibleSource(b)) sources.add(b);
         }
-        // Stable order (by registry id) so seed is reproducible across launches.
         sources.sort(Comparator.comparing(b -> Registries.BLOCK.getId(b).toString()));
 
-        List<Block> targets = new ArrayList<>(sources);
-        Collections.shuffle(targets, new Random(seed));
+        // --- target items (what you can get) — full item registry ---
+        List<Item> targets = new ArrayList<>();
+        for (Item item : Registries.ITEM) {
+            if (isEligibleTarget(item)) targets.add(item);
+        }
+        targets.sort(Comparator.comparing(i -> Registries.ITEM.getId(i).toString()));
 
-        for (int i = 0; i < sources.size(); i++) {
-            Block src = sources.get(i);
-            Block tgt = targets.get(i);
-            ItemStack drop = new ItemStack(tgt.asItem());
-            if (drop.isEmpty()) drop = new ItemStack(Items.STONE);
-            mapping.put(src, drop);
+        Random rng = new Random(seed);
+        for (Block src : sources) {
+            Item tgt = targets.get(rng.nextInt(targets.size()));
+            mapping.put(src, new ItemStack(tgt));
         }
     }
 
@@ -50,15 +54,32 @@ public class BlockRandomizer {
 
     public int mappingSize() { return mapping.size(); }
 
-    private static boolean isEligible(Block b) {
+    /** Blocks that participate as randomizer sources (what you break). */
+    private static boolean isEligibleSource(Block b) {
         if (b == Blocks.AIR || b == Blocks.CAVE_AIR || b == Blocks.VOID_AIR) return false;
         if (b == Blocks.BEDROCK || b == Blocks.BARRIER) return false;
         if (b == Blocks.COMMAND_BLOCK || b == Blocks.CHAIN_COMMAND_BLOCK || b == Blocks.REPEATING_COMMAND_BLOCK) return false;
         if (b == Blocks.STRUCTURE_BLOCK || b == Blocks.STRUCTURE_VOID) return false;
         if (b == Blocks.JIGSAW || b == Blocks.LIGHT) return false;
-        if (b instanceof BlockEntityProvider) return false; // chests, furnaces etc. retain vanilla
+        // Shulker boxes are BlockEntityProvider but should be randomizable —
+        // their contents are spilled separately by the mixin.
+        if (b instanceof ShulkerBoxBlock) { /* allow */ }
+        else if (b instanceof BlockEntityProvider) return false;
         if (b.asItem() == Items.AIR) return false;
         Identifier id = Registries.BLOCK.getId(b);
+        if (id == null) return false;
+        return true;
+    }
+
+    /** Items that can appear as randomized drops. Excludes only technical junk. */
+    private static boolean isEligibleTarget(Item item) {
+        if (item == Items.AIR) return false;
+        if (item == Items.COMMAND_BLOCK || item == Items.CHAIN_COMMAND_BLOCK || item == Items.REPEATING_COMMAND_BLOCK) return false;
+        if (item == Items.COMMAND_BLOCK_MINECART) return false;
+        if (item == Items.STRUCTURE_BLOCK || item == Items.STRUCTURE_VOID) return false;
+        if (item == Items.JIGSAW || item == Items.LIGHT) return false;
+        if (item == Items.DEBUG_STICK || item == Items.KNOWLEDGE_BOOK) return false;
+        Identifier id = Registries.ITEM.getId(item);
         if (id == null) return false;
         return true;
     }

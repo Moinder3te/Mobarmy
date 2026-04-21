@@ -22,7 +22,10 @@ public class PhaseBossBar {
     }
 
     public void update(MinecraftServer server, GamePhase phase, int remainingTicks, int totalTicks, String extra) {
-        // Add online players that are not yet on the bar
+        // Remove disconnected players and add new ones.
+        for (ServerPlayerEntity p : new java.util.ArrayList<>(bar.getPlayers())) {
+            if (p.isDisconnected()) bar.removePlayer(p);
+        }
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             if (!bar.getPlayers().contains(p)) bar.addPlayer(p);
         }

@@ -26,7 +26,8 @@ public final class PlayerUtils {
         p.setHealth(p.getMaxHealth());
         p.getHungerManager().setFoodLevel(20);
         p.getHungerManager().setSaturationLevel(5f);
-        p.clearStatusEffects();
+        // Remove harmful effects but preserve beneficial ones (Night Vision, etc.)
+        p.getStatusEffects().removeIf(inst -> !inst.getEffectType().value().isBeneficial());
         p.extinguish();
         p.setFireTicks(0);
     }

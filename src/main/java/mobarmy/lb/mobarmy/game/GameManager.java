@@ -9,22 +9,20 @@ import mobarmy.lb.mobarmy.battle.BattleController;
 import mobarmy.lb.mobarmy.team.Team;
 import mobarmy.lb.mobarmy.ui.PhaseBossBar;
 import mobarmy.lb.mobarmy.ui.WaveBuilderMenu;
+import mobarmy.lb.mobarmy.ui.stats.GameStats;
+import mobarmy.lb.mobarmy.ui.stats.StatsMenu;
 import mobarmy.lb.mobarmy.util.PlayerUtils;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
 import net.minecraft.world.GameMode;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 
@@ -148,6 +146,10 @@ public class GameManager {
             if (teamArenas.size() > needed) {
                 teamArenas.subList(needed, teamArenas.size()).clear();
             }
+            // Force-load arena chunks early so they're streamed to clients
+            // well before the battle teleport happens.
+            ServerWorld world = ArenaDimension.get(server);
+            for (Arena a : teamArenas) a.forceLoadChunks(world);
             broadcast(server, Text.literal("Verwende vorbereitete Arenen (" + needed + ").").formatted(Formatting.GREEN));
             return;
         }
@@ -172,8 +174,12 @@ public class GameManager {
         }
         broadcast(server, Text.literal("Baue " + needed + " Arenen…").formatted(Formatting.GRAY));
         long t0 = System.currentTimeMillis();
-        buildJob = new ArenaBuildJob(world, new ArrayList<>(teamArenas), () -> {
+        final List<Arena> arenasCopy = new ArrayList<>(teamArenas);
+        buildJob = new ArenaBuildJob(world, arenasCopy, () -> {
             long ms = System.currentTimeMillis() - t0;
+            // Force-load arena chunks immediately after build so they're ready
+            // for client streaming well before the battle teleport.
+            for (Arena a : arenasCopy) a.forceLoadChunks(world);
             broadcast(server, Text.literal("Arenen fertig (Radius " + mod.config.arenaRadius + ", " + (ms / 1000) + " s)")
                 .formatted(Formatting.GREEN));
         });
@@ -233,116 +239,49 @@ public class GameManager {
         if (phase != GamePhase.BATTLE) return;
         phase = GamePhase.END;
 
-        List<Team> ranking = new ArrayList<>(mod.teams.all());
-        ranking.sort((a, b) -> Integer.compare(b.score, a.score));
+        // Capture stats snapshot BEFORE resetting anything.
+        GameStats gameStats = new GameStats(new ArrayList<>(mod.teams.all()), mod.randomizer.seed());
+        this.lastGameStats = gameStats;
 
-        // ===================== TITLE =====================
-        Team winner = ranking.isEmpty() ? null : ranking.get(0);
+        // ===================== SAFE TELEPORT =====================
+        Team winner = gameStats.winner == null ? null
+            : mod.teams.all().stream().filter(t -> t.name.equals(gameStats.winner.name)).findFirst().orElse(null);
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            // Prevent fall damage: set adventure mode + heal BEFORE teleport.
+            PlayerUtils.setMode(p, GameMode.ADVENTURE);
+            PlayerUtils.heal(p);
+            p.setVelocity(0, 0, 0);
+            p.velocityDirty = true;
+            PlayerUtils.teleport(p, server.getOverworld(), mod.config.lobbyPos);
             if (winner != null) {
                 PlayerUtils.title(p,
                     Text.literal("🏆 " + winner.name + " gewinnt! 🏆").formatted(winner.color, Formatting.BOLD),
                     Text.literal(winner.score + " Punkte"));
             }
-            PlayerUtils.teleport(p, server.getOverworld(), mod.config.lobbyPos);
-            PlayerUtils.setMode(p, GameMode.ADVENTURE);
         }
 
-        // ===================== LEADERBOARD =====================
-        broadcast(server, Text.empty());
-        broadcast(server, Text.literal("╔══════════════════════════════════════╗").formatted(Formatting.GOLD, Formatting.BOLD));
-        broadcast(server, Text.literal("║        ⚔  ENDERGEBNIS  ⚔           ║").formatted(Formatting.GOLD, Formatting.BOLD));
-        broadcast(server, Text.literal("╚══════════════════════════════════════╝").formatted(Formatting.GOLD, Formatting.BOLD));
-        broadcast(server, Text.empty());
-
-        // --- Platzierungen ---
-        broadcast(server, Text.literal("  🏅 Platzierungen").formatted(Formatting.YELLOW, Formatting.BOLD));
-        String[] medals = {"🥇", "🥈", "🥉"};
-        for (int i = 0; i < ranking.size(); i++) {
-            Team t = ranking.get(i);
-            String medal = i < medals.length ? medals[i] : "  " + (i + 1) + ".";
-            broadcast(server, Text.literal("  " + medal + " " + t.name + " — " + t.score + " Punkte")
-                .formatted(t.color));
-        }
-        broadcast(server, Text.empty());
-
-        // --- Gesammelte Mobs pro Team ---
-        broadcast(server, Text.literal("  📦 Gesammelte Mobs (Farm-Phase)").formatted(Formatting.AQUA, Formatting.BOLD));
-        for (Team t : ranking) {
-            int totalKills = 0;
-            for (int c : t.killedMobs.values()) totalKills += c;
-            int uniqueTypes = t.killedMobs.size();
-            broadcast(server, Text.literal("  ▸ " + t.name + ": " + totalKills + " Mobs (" + uniqueTypes + " Arten)")
-                .formatted(t.color));
-
-            // Top 3 mob types for this team
-            List<Map.Entry<EntityType<?>, Integer>> sorted = new ArrayList<>();
-            for (var entry : t.killedMobs.object2IntEntrySet()) {
-                sorted.add(Map.entry(entry.getKey(), entry.getIntValue()));
+        // ===================== OPEN STATS UI =====================
+        // Delay 3 seconds so the title animation plays, then open the UI.
+        mod.scheduler.schedule(60, () -> {
+            for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+                StatsMenu.open(p, gameStats);
             }
-            sorted.sort(Comparator.<Map.Entry<EntityType<?>, Integer>>comparingInt(Map.Entry::getValue).reversed());
-            int shown = Math.min(3, sorted.size());
-            for (int i = 0; i < shown; i++) {
-                var e = sorted.get(i);
-                Identifier id = Registries.ENTITY_TYPE.getId(e.getKey());
-                String mobName = id != null ? id.getPath() : "?";
-                broadcast(server, Text.literal("      " + mobName + " ×" + e.getValue())
-                    .formatted(Formatting.GRAY));
-            }
-        }
-        broadcast(server, Text.empty());
+        });
 
-        // --- Meiste Kills (Farm-Phase MVP) ---
-        broadcast(server, Text.literal("  🗡 Farm-MVP (meiste Kills)").formatted(Formatting.RED, Formatting.BOLD));
-        Team bestKillTeam = null;
-        int bestKillCount = 0;
-        for (Team t : ranking) {
-            int total = 0;
-            for (int c : t.killedMobs.values()) total += c;
-            if (total > bestKillCount) {
-                bestKillCount = total;
-                bestKillTeam = t;
-            }
-        }
-        if (bestKillTeam != null) {
-            broadcast(server, Text.literal("  ★ " + bestKillTeam.name + " mit " + bestKillCount + " Kills!")
-                .formatted(bestKillTeam.color, Formatting.BOLD));
-        }
+        // Short chat summary (compact, UI has the details).
         broadcast(server, Text.empty());
-
-        // --- Artenvielfalt (meiste verschiedene Mob-Typen) ---
-        broadcast(server, Text.literal("  🌍 Artenvielfalt (verschiedene Mob-Arten)").formatted(Formatting.GREEN, Formatting.BOLD));
-        Team mostDiverseTeam = null;
-        int mostDiverse = 0;
-        for (Team t : ranking) {
-            if (t.killedMobs.size() > mostDiverse) {
-                mostDiverse = t.killedMobs.size();
-                mostDiverseTeam = t;
-            }
-        }
-        if (mostDiverseTeam != null) {
-            broadcast(server, Text.literal("  ★ " + mostDiverseTeam.name + " mit " + mostDiverse + " verschiedenen Arten!")
-                .formatted(mostDiverseTeam.color, Formatting.BOLD));
-        }
-        broadcast(server, Text.empty());
-
-        // --- Battle-Punkte (Wellen überlebt) ---
-        broadcast(server, Text.literal("  ⚔ Battle-Punkte (Wellen × 10)").formatted(Formatting.LIGHT_PURPLE, Formatting.BOLD));
-        for (Team t : ranking) {
-            int farmKills = 0;
-            for (int c : t.killedMobs.values()) farmKills += c;
-            int battlePts = t.score - farmKills; // farm gives +1 per kill, battle gives +10 per wave
-            int wavesCleared = battlePts / 10;
-            broadcast(server, Text.literal("  ▸ " + t.name + ": " + wavesCleared + " Wellen überlebt ("
-                + battlePts + " Punkte)").formatted(t.color));
-        }
-        broadcast(server, Text.empty());
-
-        // --- Abschluss ---
         broadcast(server, Text.literal("══════════════════════════════════════").formatted(Formatting.GOLD));
         if (winner != null) {
             broadcast(server, Text.literal("  🏆 Gewinner: " + winner.name + " 🏆")
                 .formatted(winner.color, Formatting.BOLD));
+        }
+        String[] medals = {"🥇", "🥈", "🥉"};
+        List<GameStats.TeamStats> ranking = gameStats.ranking;
+        for (int i = 0; i < ranking.size(); i++) {
+            GameStats.TeamStats t = ranking.get(i);
+            String medal = i < medals.length ? medals[i] : "  " + (i + 1) + ".";
+            broadcast(server, Text.literal("  " + medal + " " + t.name + " — " + t.score + " Punkte")
+                .formatted(t.color));
         }
         broadcast(server, Text.literal("══════════════════════════════════════").formatted(Formatting.GOLD));
         broadcast(server, Text.empty());
@@ -353,16 +292,28 @@ public class GameManager {
         battle = null;
     }
 
+    /** Last game stats snapshot — players can re-open the stats UI via command. */
+    private GameStats lastGameStats;
+    public GameStats lastGameStats() { return lastGameStats; }
+
     public void resetToLobby(MinecraftServer server) {
-        // Cancel any in-flight arena build.
-        buildJob = null;
+        // Cancel any in-flight arena build and release its chunk tickets.
+        if (buildJob != null) {
+            buildJob.cancel();
+            buildJob = null;
+        }
         lastReportedBuildPercent = -1;
+
+        // Release force-loaded arena chunks.
+        ServerWorld arenaWorld = ArenaDimension.get(server);
+        for (Arena a : teamArenas) {
+            try { a.unforceLoadChunks(arenaWorld); } catch (Throwable ignored) {}
+        }
 
         // Clean up any active battle: clear leftover wave mobs in every arena.
         if (battle != null) {
-            ServerWorld world = ArenaDimension.get(server);
             for (var m : battle.matches()) {
-                try { m.spawner.clear(world); } catch (Throwable ignored) {}
+                try { m.spawner.clear(arenaWorld); } catch (Throwable ignored) {}
             }
         }
         // Discard any non-player entities still floating in the arenas, and

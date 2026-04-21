@@ -36,6 +36,17 @@ public class MobarmyCommand {
                 mobarmy.lb.mobarmy.ui.lobby.LobbyHub.open(sp, mod);
                 return 1;
             }))
+            .then(CommandManager.literal("stats").executes(ctx -> {
+                ServerPlayerEntity sp = ctx.getSource().getPlayer();
+                if (sp == null) return 0;
+                var gs = mod.gameManager.lastGameStats();
+                if (gs == null) {
+                    ctx.getSource().sendFeedback(() -> Text.literal("Keine Stats vorhanden — noch kein Spiel beendet.").formatted(Formatting.RED), false);
+                    return 0;
+                }
+                mobarmy.lb.mobarmy.ui.stats.StatsMenu.open(sp, gs);
+                return 1;
+            }))
             .then(CommandManager.literal("start").executes(ctx -> {
                 mod.gameManager.startGame(ctx.getSource().getServer());
                 return 1;

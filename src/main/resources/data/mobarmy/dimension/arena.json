@@ -1,5 +1,5 @@
 {
-  "type": "minecraft:overworld",
+  "type": "mobarmy:arena",
   "generator": {
     "type": "minecraft:noise",
     "settings": "minecraft:overworld",

@@ -62,6 +62,8 @@ public class WaveBuilderMenu implements NamedScreenHandlerFactory {
             for (Handler h : set) if (h.viewer != null) players.add(h.viewer);
         for (ServerPlayerEntity p : players) p.closeHandledScreen();
         OPEN_HANDLERS.clear();
+        ACTIVE_WAVE.clear();
+        ACTIVE_PAGE.clear();
     }
 
     public static boolean allTeamsSubmitted(MobarmyMod mod) {

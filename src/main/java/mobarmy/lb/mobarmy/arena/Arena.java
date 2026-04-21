@@ -78,5 +78,36 @@ public class Arena {
     public void build(ServerWorld world) {
         ArenaBuilder.build(world, this);
     }
+
+    /**
+     * Force-load all chunks that cover the arena cylinder so mobs tick and
+     * spawn even when no player is nearby (e.g. spectators are elsewhere).
+     */
+    public void forceLoadChunks(ServerWorld world) {
+        int minCx = (center.getX() - radius) >> 4;
+        int maxCx = (center.getX() + radius) >> 4;
+        int minCz = (center.getZ() - radius) >> 4;
+        int maxCz = (center.getZ() + radius) >> 4;
+        for (int cx = minCx; cx <= maxCx; cx++) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                world.setChunkForced(cx, cz, true);
+            }
+        }
+    }
+
+    /**
+     * Release force-loaded chunks for this arena.
+     */
+    public void unforceLoadChunks(ServerWorld world) {
+        int minCx = (center.getX() - radius) >> 4;
+        int maxCx = (center.getX() + radius) >> 4;
+        int minCz = (center.getZ() - radius) >> 4;
+        int maxCz = (center.getZ() + radius) >> 4;
+        for (int cx = minCx; cx <= maxCx; cx++) {
+            for (int cz = minCz; cz <= maxCz; cz++) {
+                world.setChunkForced(cx, cz, false);
+            }
+        }
+    }
 }
 

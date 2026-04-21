@@ -84,6 +84,17 @@ public class ArenaBuildJob {
 
     public boolean isDone() { return stage == Stage.DONE; }
 
+    /** Cancel this job and release all chunk tickets we're holding. */
+    public void cancel() {
+        if (stage == Stage.DONE) return;
+        stage = Stage.DONE;
+        ServerChunkManager scm = world.getChunkManager();
+        for (ChunkPos cp : heldTickets) {
+            try { scm.removeTicket(TICKET_TYPE, cp, TICKET_RADIUS); } catch (Throwable ignored) {}
+        }
+        heldTickets.clear();
+    }
+
     public int progressPercent() {
         int totalChunks = chunkQueue.size();
         if (stage == Stage.DONE) return 100;
