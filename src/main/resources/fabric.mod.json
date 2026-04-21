@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "mobarmy",
+  "version": "${version}",
+  "name": "Mobarmy",
+  "description": "Team-based randomizer game with farm + arrange + battle phases.",
+  "authors": ["Liam"],
+  "contact": {
+    "repo": "https://github.com/Liam/Mobarmy"
+  },
+  "license": "BSD-3-Clause",
+  "icon": "assets/mobarmy/icon.png",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      "mobarmy.lb.mobarmy.MobarmyMod"
+    ]
+  },
+  "mixins": [
+    "mobarmy.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21"
+  }
+}

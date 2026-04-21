@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "mobarmy.lb.mobarmy.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "BlockDropStackMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+
