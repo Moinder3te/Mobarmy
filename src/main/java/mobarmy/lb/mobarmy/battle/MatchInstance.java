@@ -6,10 +6,14 @@ import mobarmy.lb.mobarmy.team.Team;
 import mobarmy.lb.mobarmy.util.PlayerUtils;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.boss.BossBar;
+import net.minecraft.entity.boss.ServerBossBar;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.sound.SoundCategory;
+import net.minecraft.sound.SoundEvents;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.Box;
@@ -33,6 +37,22 @@ public class MatchInstance {
     public int waveIndex = 0;
     public boolean waitingForWave = false;
     public boolean finished = false;
+    /** True if the team cleared ALL waves, false if they wiped. */
+    public boolean cleared = false;
+
+    // =================== TIMING ===================
+    /** Server tick when the match actually started (first wave spawned). */
+    private long matchStartTick = -1;
+    /** Server tick when the match ended (all waves cleared or wipe). */
+    private long matchEndTick = -1;
+    /** Server tick when the current wave started. */
+    private long waveStartTick = -1;
+    /** Per-wave clear times in ticks. Index = wave number. */
+    public final List<Long> waveTimes = new ArrayList<>();
+    /** Total match duration in ticks (set on finish). */
+    public long totalTimeTicks = Long.MAX_VALUE; // MAX = wiped / DNF
+    /** Deaths in this match. */
+    public int deaths = 0;
 
     /** Countdown ticks until the first wave spawns.
      *  Needs to be long enough for the client to finish loading arena chunks
@@ -43,15 +63,30 @@ public class MatchInstance {
     /** Whether we've already broadcast the wipe / victory message. */
     private boolean ended = false;
 
+    /** Per-match boss bar visible only to this team's players. */
+    private final ServerBossBar matchBar;
+
     public MatchInstance(Team attacker, Team defender, Arena arena) {
         this.attacker = attacker;
         this.defender = defender;
         this.arena = arena;
+        this.matchBar = new ServerBossBar(
+            Text.literal("⚔ Battle").formatted(Formatting.RED, Formatting.BOLD),
+            BossBar.Color.RED, BossBar.Style.PROGRESS);
+        this.matchBar.setVisible(true);
     }
 
     /** Called every server tick by the BattleController. */
     public void tick(ServerWorld world, MobarmyMod mod) {
         if (finished) return;
+
+        // Update per-match boss bar: ensure team players are tracked and show wave info.
+        updateMatchBar(world.getServer(), mod);
+
+        // Update Mob Tracker compasses every 5 ticks.
+        if (world.getServer().getTicks() % 5 == 0) {
+            MobTracker.updateAll(this, world);
+        }
 
         // Gestaffeltes Spawnen aus der Queue (max-alive-Limit, spawnsPerTick).
         spawner.tick(world, mod.config);
@@ -74,49 +109,79 @@ public class MatchInstance {
             if (!ended) {
                 broadcastToTeam(world.getServer(), attacker,
                     Text.literal("Dein Team wurde in der Arena besiegt!").formatted(Formatting.RED, Formatting.BOLD));
+                playSoundToTeam(world, SoundEvents.ENTITY_WITHER_DEATH, 0.5f, 1f);
                 ended = true;
             }
             spawner.clear(world);
-            finished = true;
+            finishMatch(world.getServer(), false);
             return;
         }
 
-        // Wave cleared → score + next wave.
+        // Wave cleared → time it + next wave.
         if (waitingForWave && spawner.isWaveCleared()) {
             waitingForWave = false;
-            attacker.score += 10;
+            long now = world.getServer().getTicks();
+            long waveDuration = waveStartTick > 0 ? now - waveStartTick : 0;
+            waveTimes.add(waveDuration);
+            String timeStr = formatTicks(waveDuration);
             broadcastToTeam(world.getServer(), attacker,
-                Text.literal("Welle " + (waveIndex + 1) + " geschafft! +10").formatted(Formatting.GREEN, Formatting.BOLD));
+                Text.literal("Welle " + (waveIndex + 1) + " geschafft! (" + timeStr + ")")
+                    .formatted(Formatting.GREEN, Formatting.BOLD));
+            playSoundToTeam(world, SoundEvents.ENTITY_PLAYER_LEVELUP, 1f, 1.2f);
             waveIndex++;
             if (waveIndex >= mod.config.waveCount || waveIndex >= defender.waves.size()) {
                 broadcastToTeam(world.getServer(), attacker,
                     Text.literal("Alle Wellen überlebt! 🏆").formatted(Formatting.GOLD, Formatting.BOLD));
-                finished = true;
+                playSoundToTeam(world, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1f);
+                finishMatch(world.getServer(), true);
                 return;
             }
             nextWaveDelay = mod.config.waveDelayTicks;
         }
     }
 
+    private void finishMatch(MinecraftServer srv, boolean allCleared) {
+        this.cleared = allCleared;
+        this.matchEndTick = srv.getTicks();
+        if (matchStartTick > 0) {
+            this.totalTimeTicks = matchEndTick - matchStartTick;
+        }
+        finished = true;
+        // Remove boss bar and mob tracker from all players.
+        matchBar.setVisible(false);
+        matchBar.clearPlayers();
+        for (ServerPlayerEntity p : onlineAttackers(srv)) {
+            MobTracker.removeAll(p);
+        }
+    }
+
+    public void onPlayerDeath() {
+        if (finished) return;
+        deaths++;
+    }
+
     private void startWave(ServerWorld world, MobarmyMod mod) {
         if (waveIndex >= defender.waves.size()) {
-            MobarmyMod.LOG.warn("[Battle] {} vs {}: waveIndex {} >= waves.size {} — finishing match",
-                attacker.name, defender.name, waveIndex, defender.waves.size());
-            finished = true;
+            // No waves to fight → attacker wins by default.
+            finishMatch(world.getServer(), true);
             return;
         }
         List<EntityType<?>> mobs = defender.waves.get(waveIndex);
         if (mobs.isEmpty()) {
             MobarmyMod.LOG.warn("[Battle] {} vs {}: wave {} is empty — skipping",
                 attacker.name, defender.name, waveIndex);
+            waveTimes.add(0L); // empty wave = 0 time
             waveIndex++;
             if (waveIndex >= mod.config.waveCount || waveIndex >= defender.waves.size()) {
-                finished = true;
+                finishMatch(world.getServer(), true);
                 return;
             }
-            nextWaveDelay = 1; // retry next wave on next tick
+            nextWaveDelay = 1;
             return;
         }
+        long now = world.getServer().getTicks();
+        if (matchStartTick < 0) matchStartTick = now;
+        waveStartTick = now;
         List<ServerPlayerEntity> targets = onlineAttackers(world.getServer());
         MobarmyMod.LOG.info("[Battle] {} vs {}: starting wave {} with {} mobs, {} targets",
             attacker.name, defender.name, waveIndex + 1, mobs.size(), targets.size());
@@ -127,6 +192,15 @@ public class MatchInstance {
         }
         spawner.spawnWave(world, arena, mobs, targets, defender);
         waitingForWave = true;
+    }
+
+    public static String formatTicks(long ticks) {
+        long totalSec = ticks / 20;
+        long min = totalSec / 60;
+        long sec = totalSec % 60;
+        long tenths = (ticks % 20) * 10 / 20;
+        if (min > 0) return String.format("%d:%02d.%d", min, sec, tenths);
+        return String.format("%d.%ds", sec, tenths);
     }
 
     /** Safety-net purge: the global ENTITY_LOAD blocker in MobarmyMod already
@@ -164,12 +238,34 @@ public class MatchInstance {
         return list;
     }
 
+    private void updateMatchBar(MinecraftServer srv, MobarmyMod mod) {
+        // Sync player list: add new, remove disconnected.
+        for (ServerPlayerEntity p : new ArrayList<>(matchBar.getPlayers())) {
+            if (p.isDisconnected()) matchBar.removePlayer(p);
+        }
+        for (ServerPlayerEntity p : onlineAttackers(srv)) {
+            if (!matchBar.getPlayers().contains(p)) matchBar.addPlayer(p);
+        }
+        int totalWaves = Math.min(mod.config.waveCount, defender.waves.size());
+        int currentWave = Math.min(waveIndex + 1, totalWaves);
+        matchBar.setName(Text.literal("⚔ Battle  ").formatted(Formatting.RED)
+            .append(Text.literal("— ").formatted(Formatting.GRAY))
+            .append(Text.literal("Welle " + currentWave + "/" + totalWaves).formatted(Formatting.WHITE)));
+        matchBar.setPercent(totalWaves > 0 ? (float) waveIndex / totalWaves : 1f);
+    }
+
     public boolean isAttacker(PlayerEntity p) { return attacker.members.contains(p.getUuid()); }
 
     private void broadcastToTeam(MinecraftServer srv, Team t, Text msg) {
         for (UUID u : t.members) {
             ServerPlayerEntity p = srv.getPlayerManager().getPlayer(u);
             if (p != null) p.sendMessage(msg, false);
+        }
+    }
+
+    private void playSoundToTeam(ServerWorld world, net.minecraft.sound.SoundEvent sound, float volume, float pitch) {
+        for (ServerPlayerEntity p : onlineAttackers(world.getServer())) {
+            world.playSound(null, p.getBlockPos(), sound, SoundCategory.PLAYERS, volume, pitch);
         }
     }
 }

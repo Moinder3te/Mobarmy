@@ -1,5 +1,6 @@
 package mobarmy.lb.mobarmy.ui.stats;
 
+import mobarmy.lb.mobarmy.battle.MatchInstance;
 import mobarmy.lb.mobarmy.ui.lobby.MenuUtils;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.LoreComponent;
@@ -90,6 +91,11 @@ public class StatsMenu implements NamedScreenHandlerFactory {
             open(p, stats, page + 1);
             return;
         }
+        // Close button (bottomRow + 6)
+        if (slot == (ROWS - 1) * 9 + 6) {
+            p.closeHandledScreen();
+            return;
+        }
         // Overview page: click on a team ranking entry → go to that team's page
         if (page == 0) {
             // Team entries are at slots 19-25 (row 2, cols 1-7) for up to 7 teams
@@ -141,10 +147,13 @@ public class StatsMenu implements NamedScreenHandlerFactory {
 
         // Winner trophy (slot 13 → center)
         if (stats.winner != null) {
+            String winTime = stats.winner.totalTimeTicks < Long.MAX_VALUE
+                ? MatchInstance.formatTicks(stats.winner.totalTimeTicks) : "DNF";
             inv.setStack(13, MenuUtils.glow(MenuUtils.named(new ItemStack(Items.GOLDEN_APPLE),
                 Text.literal("🏆 GEWINNER 🏆").formatted(Formatting.GOLD, Formatting.BOLD),
                 Text.literal(stats.winner.name).formatted(stats.winner.color, Formatting.BOLD),
-                Text.literal(stats.winner.score + " Punkte").formatted(Formatting.YELLOW)
+                Text.literal("Zeit: " + winTime).formatted(Formatting.YELLOW),
+                Text.literal(stats.winner.wavesCleared + " Wellen | " + stats.winner.totalDeaths + " Tode").formatted(Formatting.GRAY)
             )));
         }
 
@@ -169,10 +178,14 @@ public class StatsMenu implements NamedScreenHandlerFactory {
             Item wool = MenuUtils.woolFor(ts.color);
             ItemStack stack = i == 0 ? MenuUtils.glow(new ItemStack(wool)) : new ItemStack(wool);
 
+            String time = ts.totalTimeTicks < Long.MAX_VALUE
+                ? MatchInstance.formatTicks(ts.totalTimeTicks) : "DNF";
+
             List<Text> lore = new ArrayList<>();
-            lore.add(Text.literal("Score: " + ts.score + " Punkte").formatted(Formatting.YELLOW));
-            lore.add(Text.literal("Farm: " + ts.totalFarmKills + " Kills (" + ts.uniqueMobTypes + " Arten)").formatted(Formatting.GRAY));
-            lore.add(Text.literal("Battle: " + ts.wavesCleared + " Wellen überlebt").formatted(Formatting.GRAY));
+            lore.add(Text.literal("Zeit: " + time).formatted(ts.allCleared ? Formatting.GREEN : Formatting.RED));
+            lore.add(Text.literal("Wellen: " + ts.wavesCleared + " geschafft").formatted(Formatting.GRAY));
+            lore.add(Text.literal("Tode: " + ts.totalDeaths).formatted(Formatting.GRAY));
+            lore.add(Text.literal("Farm: " + ts.totalFarmKills + " Kills (" + ts.uniqueMobTypes + " Arten)").formatted(Formatting.DARK_GRAY));
             lore.add(Text.empty());
             lore.add(Text.literal("» Klicke für Details").formatted(Formatting.AQUA));
 
@@ -182,33 +195,6 @@ public class StatsMenu implements NamedScreenHandlerFactory {
             inv.setStack(slot, stack);
         }
 
-        // Row 4: Score comparison bar
-        buildScoreBar(inv, 4);
-    }
-
-    /** Visual score comparison using colored glass panes across row. */
-    private void buildScoreBar(SimpleInventory inv, int row) {
-        if (stats.ranking.isEmpty()) return;
-        int maxScore = stats.ranking.get(0).score;
-        if (maxScore <= 0) return;
-
-        // Calculate proportional widths (7 usable slots: cols 1-7)
-        int totalSlots = 7;
-        // Just show farm vs battle split for the winner
-        GameStats.TeamStats w = stats.ranking.get(0);
-        int farmSlots = Math.max(1, (int) Math.round((double) w.totalFarmKills / maxScore * totalSlots));
-        int battleSlots = totalSlots - farmSlots;
-
-        for (int c = 1; c <= 7; c++) {
-            int slot = row * 9 + c;
-            if (c <= farmSlots) {
-                inv.setStack(slot, MenuUtils.named(new ItemStack(Items.LIME_STAINED_GLASS_PANE),
-                    Text.literal("Farm-Punkte: " + w.totalFarmKills).formatted(Formatting.GREEN)));
-            } else {
-                inv.setStack(slot, MenuUtils.named(new ItemStack(Items.RED_STAINED_GLASS_PANE),
-                    Text.literal("Battle-Punkte: " + w.battlePoints).formatted(Formatting.RED)));
-            }
-        }
     }
 
     // =========================================================================
@@ -219,45 +205,74 @@ public class StatsMenu implements NamedScreenHandlerFactory {
         String[] medals = {"🥇", "🥈", "🥉"};
         String medal = teamIdx < medals.length ? medals[teamIdx] + " " : "#" + (teamIdx + 1) + " ";
         Item banner = MenuUtils.bannerFor(ts.color);
+        String totalTime = ts.totalTimeTicks < Long.MAX_VALUE
+            ? MatchInstance.formatTicks(ts.totalTimeTicks) : "DNF";
         inv.setStack(4, MenuUtils.glow(MenuUtils.named(new ItemStack(banner),
             Text.literal(medal + ts.name).formatted(ts.color, Formatting.BOLD),
             Text.literal("Platz " + (teamIdx + 1) + " von " + stats.ranking.size()).formatted(Formatting.GRAY),
-            Text.literal(ts.memberCount + " Spieler").formatted(Formatting.GRAY)
+            Text.literal("Gesamtzeit: " + totalTime).formatted(Formatting.YELLOW)
         )));
 
         // Row 1: Stat cards
-        // Total score (slot 10)
-        inv.setStack(10, MenuUtils.named(new ItemStack(Items.EXPERIENCE_BOTTLE),
-            Text.literal("Score: " + ts.score).formatted(Formatting.YELLOW, Formatting.BOLD),
-            Text.literal("Farm: " + ts.totalFarmKills + " Punkte").formatted(Formatting.GREEN),
-            Text.literal("Battle: " + ts.battlePoints + " Punkte").formatted(Formatting.RED)
+        // Total time (slot 10)
+        inv.setStack(10, MenuUtils.named(new ItemStack(Items.CLOCK),
+            Text.literal("⏱ Gesamtzeit").formatted(Formatting.YELLOW, Formatting.BOLD),
+            Text.literal(totalTime).formatted(ts.allCleared ? Formatting.GREEN : Formatting.RED),
+            ts.allCleared
+                ? Text.literal("Alle Wellen geschafft!").formatted(Formatting.GREEN)
+                : Text.literal("Nicht alle Wellen geschafft").formatted(Formatting.RED)
         ));
 
-        // Farm kills (slot 12)
-        inv.setStack(12, MenuUtils.named(new ItemStack(Items.IRON_SWORD),
-            Text.literal("🗡 Farm-Kills: " + ts.totalFarmKills).formatted(Formatting.RED, Formatting.BOLD),
-            Text.literal(ts.uniqueMobTypes + " verschiedene Arten").formatted(Formatting.GRAY),
+        // Deaths (slot 12)
+        inv.setStack(12, MenuUtils.named(new ItemStack(Items.SKELETON_SKULL),
+            Text.literal("💀 Tode: " + ts.totalDeaths).formatted(Formatting.RED, Formatting.BOLD),
+            Text.literal(ts.memberCount + " Spieler").formatted(Formatting.GRAY)
+        ));
+
+        // Waves (slot 14)
+        inv.setStack(14, MenuUtils.named(new ItemStack(Items.SHIELD),
+            Text.literal("⚔ Wellen: " + ts.wavesCleared).formatted(Formatting.AQUA, Formatting.BOLD),
+            Text.literal("über alle Runden").formatted(Formatting.GRAY)
+        ));
+
+        // Farm stats (slot 16)
+        inv.setStack(16, MenuUtils.named(new ItemStack(Items.IRON_SWORD),
+            Text.literal("🗡 Farm: " + ts.totalFarmKills + " Kills").formatted(Formatting.GREEN, Formatting.BOLD),
+            Text.literal(ts.uniqueMobTypes + " Arten").formatted(Formatting.GRAY),
             ts.totalBabyKills > 0
                 ? Text.literal(ts.totalBabyKills + " davon Babys").formatted(Formatting.LIGHT_PURPLE)
                 : Text.literal("Keine Babys").formatted(Formatting.DARK_GRAY)
         ));
 
-        // Waves survived (slot 14)
-        inv.setStack(14, MenuUtils.named(new ItemStack(Items.SHIELD),
-            Text.literal("⚔ Wellen: " + ts.wavesCleared + " überlebt").formatted(Formatting.AQUA, Formatting.BOLD),
-            Text.literal(ts.battlePoints + " Battle-Punkte").formatted(Formatting.GRAY)
-        ));
+        // Row 2: Per-round results
+        for (int i = 0; i < ts.rounds.size() && i < 7; i++) {
+            GameStats.RoundResult rr = ts.rounds.get(i);
+            int slot = 2 * 9 + 1 + i;
+            String roundTime = rr.cleared
+                ? MatchInstance.formatTicks(rr.timeTicks)
+                : "WIPE";
+            Item item = rr.cleared ? Items.LIME_CONCRETE : Items.RED_CONCRETE;
+            ItemStack stack = new ItemStack(item);
 
-        // Diversity (slot 16)
-        inv.setStack(16, MenuUtils.named(new ItemStack(Items.SPYGLASS),
-            Text.literal("🌍 Artenvielfalt: " + ts.uniqueMobTypes).formatted(Formatting.GREEN, Formatting.BOLD),
-            Text.literal("Verschiedene Mob-Arten").formatted(Formatting.GRAY)
-        ));
+            List<Text> rlore = new ArrayList<>();
+            rlore.add(Text.literal("vs " + rr.opponentName + "'s Wellen").formatted(Formatting.GRAY));
+            rlore.add(Text.literal("Zeit: " + roundTime).formatted(rr.cleared ? Formatting.GREEN : Formatting.RED));
+            rlore.add(Text.literal("Tode: " + rr.deaths).formatted(Formatting.GRAY));
+            for (int w = 0; w < rr.waveTimes.size(); w++) {
+                rlore.add(Text.literal("  Welle " + (w + 1) + ": " + MatchInstance.formatTicks(rr.waveTimes.get(w)))
+                    .formatted(Formatting.DARK_GRAY));
+            }
 
-        // Rows 2-4: Mob list (up to 21 mobs, 7 per row)
-        for (int i = 0; i < ts.topMobs.size() && i < 21; i++) {
+            stack.set(DataComponentTypes.CUSTOM_NAME,
+                Text.literal("").append(Text.literal("Runde " + (rr.round + 1)).formatted(Formatting.WHITE, Formatting.BOLD)).styled(s -> s.withItalic(false)));
+            stack.set(DataComponentTypes.LORE, new LoreComponent(rlore));
+            inv.setStack(slot, stack);
+        }
+
+        // Rows 3-4: Mob list (up to 14 mobs, 7 per row)
+        for (int i = 0; i < ts.topMobs.size() && i < 14; i++) {
             GameStats.MobEntry mob = ts.topMobs.get(i);
-            int row = 2 + i / 7;
+            int row = 3 + i / 7;
             int col = 1 + i % 7;
             int slot = row * 9 + col;
 
@@ -275,10 +290,9 @@ public class StatsMenu implements NamedScreenHandlerFactory {
             if (i == 0) stack = MenuUtils.glow(stack);
             inv.setStack(slot, stack);
         }
-        // If more than 21 mobs, show a "..." indicator
-        if (ts.topMobs.size() > 21) {
+        if (ts.topMobs.size() > 14) {
             inv.setStack(4 * 9 + 8, MenuUtils.named(new ItemStack(Items.PAPER),
-                Text.literal("... und " + (ts.topMobs.size() - 21) + " weitere").formatted(Formatting.GRAY)));
+                Text.literal("... und " + (ts.topMobs.size() - 14) + " weitere").formatted(Formatting.GRAY)));
         }
     }
 

@@ -256,7 +256,6 @@ public class MobarmyCommand {
             if (baby) team.killedBabies.addTo(type, 1);
             added++;
             if (baby) babyAdded++;
-            team.score += 1;
         }
         final int finalAdded = added;
         final int finalBaby = babyAdded;
@@ -314,7 +313,6 @@ public class MobarmyCommand {
                 team.killedNbts.computeIfAbsent(type, k -> new java.util.ArrayList<>()).add(nbt);
                 team.killedMobs.addTo(type, 1);
                 if (baby) team.killedBabies.addTo(type, 1);
-                team.score += 1;
                 addedForType++;
             }
             if (addedForType > 0) {

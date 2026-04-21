@@ -1,6 +1,7 @@
 package mobarmy.lb.mobarmy;
 
 import mobarmy.lb.mobarmy.arena.ArenaDimension;
+import mobarmy.lb.mobarmy.arena.ArenaProtection;
 import mobarmy.lb.mobarmy.battle.WaveSpawner;
 import mobarmy.lb.mobarmy.commands.BackpackCommand;
 import mobarmy.lb.mobarmy.commands.MobarmyCommand;
@@ -17,6 +18,7 @@ import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -98,12 +100,24 @@ public class MobarmyMod implements ModInitializer {
                 if (gameManager.phase() != GamePhase.BATTLE || gameManager.battle() == null) return;
                 var match = gameManager.battle().findMatchForAttacker(sp);
                 if (match == null) return;
+                // Track arena death for stats.
+                match.onPlayerDeath();
                 final java.util.UUID uuid = sp.getUuid();
                 final var arena = match.arena;
                 int delay = config.respawnDelayTicks;
-                sp.sendMessage(net.minecraft.text.Text.literal(
-                    "Respawn in " + (delay / 20) + "s — danach gehts zurück in die Arena.")
-                    .formatted(net.minecraft.util.Formatting.GRAY), true);
+                int totalSeconds = delay / 20;
+                // Countdown action bar: show remaining seconds every second.
+                for (int s = totalSeconds; s > 0; s--) {
+                    final int sec = s;
+                    scheduler.schedule((totalSeconds - s) * 20, () -> {
+                        if (server == null || gameManager.phase() != GamePhase.BATTLE) return;
+                        ServerPlayerEntity pp = server.getPlayerManager().getPlayer(uuid);
+                        if (pp == null || !pp.isAlive()) return;
+                        pp.sendMessage(net.minecraft.text.Text.literal(
+                            "⚔ Zurück in die Arena in " + sec + "s")
+                            .formatted(net.minecraft.util.Formatting.RED), true);
+                    });
+                }
                 scheduler.schedule(delay, () -> {
                     if (server == null) return;
                     if (gameManager.phase() != GamePhase.BATTLE) return;
@@ -113,6 +127,13 @@ public class MobarmyMod implements ModInitializer {
                     mobarmy.lb.mobarmy.util.PlayerUtils.heal(p);
                     mobarmy.lb.mobarmy.util.PlayerUtils.setMode(p, net.minecraft.world.GameMode.SURVIVAL);
                     mobarmy.lb.mobarmy.util.PlayerUtils.teleport(p, arenaWorld, arena.spawnA);
+                    // Re-give mob tracker after respawn.
+                    mobarmy.lb.mobarmy.battle.MobTracker.removeAll(p);
+                    p.getInventory().setStack(8, mobarmy.lb.mobarmy.battle.MobTracker.create());
+                    // Sound cue on re-entry.
+                    arenaWorld.playSound(null, p.getBlockPos(),
+                        net.minecraft.sound.SoundEvents.ENTITY_ENDERMAN_TELEPORT,
+                        net.minecraft.sound.SoundCategory.PLAYERS, 0.8f, 1.2f);
                 });
                 return;
             }
@@ -132,6 +153,15 @@ public class MobarmyMod implements ModInitializer {
         ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) -> {
             if (!(entity instanceof ServerPlayerEntity)) return true;
             if (gameManager.phase() == GamePhase.ARRANGE) return false;
+            return true;
+        });
+
+        // Prevent players from breaking arena structure blocks.
+        PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, be) -> {
+            if (world.isClient()) return true;
+            if (ArenaProtection.isProtected(pos)) {
+                return false; // cancel the break
+            }
             return true;
         });
 

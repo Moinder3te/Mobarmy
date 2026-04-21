@@ -146,9 +146,14 @@ public class GameManager {
             if (teamArenas.size() > needed) {
                 teamArenas.subList(needed, teamArenas.size()).clear();
             }
+            ServerWorld world = ArenaDimension.get(server);
+            if (world.getRegistryKey() != ArenaDimension.WORLD_KEY) {
+                broadcast(server, Text.literal("FEHLER: Arena-Dimension nicht geladen! Ist das Datapack installiert?").formatted(Formatting.RED));
+                phase = GamePhase.LOBBY;
+                return;
+            }
             // Force-load arena chunks early so they're streamed to clients
             // well before the battle teleport happens.
-            ServerWorld world = ArenaDimension.get(server);
             for (Arena a : teamArenas) a.forceLoadChunks(world);
             broadcast(server, Text.literal("Verwende vorbereitete Arenen (" + needed + ").").formatted(Formatting.GREEN));
             return;
@@ -162,6 +167,11 @@ public class GameManager {
         // startGame) keeps the map intact when reusing pre-built arenas.
         ArenaProtection.clear();
         ServerWorld world = ArenaDimension.get(server);
+        if (world.getRegistryKey() != ArenaDimension.WORLD_KEY) {
+            broadcast(server, Text.literal("FEHLER: Arena-Dimension nicht geladen! Ist das Datapack installiert?").formatted(Formatting.RED));
+            phase = GamePhase.LOBBY;
+            return;
+        }
         ArenaDimension.applyGameRules(world);
         for (int i = 0; i < needed; i++) {
             net.minecraft.util.math.BlockPos offset =
@@ -240,39 +250,48 @@ public class GameManager {
         phase = GamePhase.END;
 
         // Capture stats snapshot BEFORE resetting anything.
-        GameStats gameStats = new GameStats(new ArrayList<>(mod.teams.all()), mod.randomizer.seed());
+        List<mobarmy.lb.mobarmy.battle.MatchResult> allResults =
+            battle != null ? battle.allResults() : List.of();
+        GameStats gameStats = new GameStats(new ArrayList<>(mod.teams.all()), allResults, mod.randomizer.seed());
         this.lastGameStats = gameStats;
 
         // ===================== SAFE TELEPORT =====================
-        Team winner = gameStats.winner == null ? null
-            : mod.teams.all().stream().filter(t -> t.name.equals(gameStats.winner.name)).findFirst().orElse(null);
+        GameStats.TeamStats winnerStats = gameStats.winner;
+        Team winner = winnerStats == null ? null
+            : mod.teams.all().stream().filter(t -> t.name.equals(winnerStats.name)).findFirst().orElse(null);
+        String winnerTime = winnerStats != null && winnerStats.totalTimeTicks < Long.MAX_VALUE
+            ? mobarmy.lb.mobarmy.battle.MatchInstance.formatTicks(winnerStats.totalTimeTicks)
+            : "DNF";
+        PlayerUtils.ensurePlatform(server.getOverworld(), mod.config.lobbyPos);
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
-            // Prevent fall damage: set adventure mode + heal BEFORE teleport.
             PlayerUtils.setMode(p, GameMode.ADVENTURE);
             PlayerUtils.heal(p);
             p.setVelocity(0, 0, 0);
             p.velocityDirty = true;
             PlayerUtils.teleport(p, server.getOverworld(), mod.config.lobbyPos);
+            // Victory sound for everyone.
+            server.getOverworld().playSound(null, p.getBlockPos(),
+                net.minecraft.sound.SoundEvents.UI_TOAST_CHALLENGE_COMPLETE,
+                net.minecraft.sound.SoundCategory.MASTER, 1f, 1f);
             if (winner != null) {
                 PlayerUtils.title(p,
                     Text.literal("🏆 " + winner.name + " gewinnt! 🏆").formatted(winner.color, Formatting.BOLD),
-                    Text.literal(winner.score + " Punkte"));
+                    Text.literal("Schnellste Zeit: " + winnerTime));
             }
         }
 
         // ===================== OPEN STATS UI =====================
-        // Delay 3 seconds so the title animation plays, then open the UI.
         mod.scheduler.schedule(60, () -> {
             for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
                 StatsMenu.open(p, gameStats);
             }
         });
 
-        // Short chat summary (compact, UI has the details).
+        // Short chat summary.
         broadcast(server, Text.empty());
         broadcast(server, Text.literal("══════════════════════════════════════").formatted(Formatting.GOLD));
         if (winner != null) {
-            broadcast(server, Text.literal("  🏆 Gewinner: " + winner.name + " 🏆")
+            broadcast(server, Text.literal("  🏆 Gewinner: " + winner.name + " (" + winnerTime + ") 🏆")
                 .formatted(winner.color, Formatting.BOLD));
         }
         String[] medals = {"🥇", "🥈", "🥉"};
@@ -280,7 +299,10 @@ public class GameManager {
         for (int i = 0; i < ranking.size(); i++) {
             GameStats.TeamStats t = ranking.get(i);
             String medal = i < medals.length ? medals[i] : "  " + (i + 1) + ".";
-            broadcast(server, Text.literal("  " + medal + " " + t.name + " — " + t.score + " Punkte")
+            String time = t.totalTimeTicks < Long.MAX_VALUE
+                ? mobarmy.lb.mobarmy.battle.MatchInstance.formatTicks(t.totalTimeTicks)
+                : "DNF";
+            broadcast(server, Text.literal("  " + medal + " " + t.name + " — " + time)
                 .formatted(t.color));
         }
         broadcast(server, Text.literal("══════════════════════════════════════").formatted(Formatting.GOLD));
@@ -337,6 +359,7 @@ public class GameManager {
         arenasPrebuilt = false;
         for (Team t : mod.teams.all()) t.resetForNewGame();
         WaveBuilderMenu.closeAll(mod);
+        PlayerUtils.ensurePlatform(server.getOverworld(), mod.config.lobbyPos);
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             PlayerUtils.setMode(p, GameMode.ADVENTURE);
             PlayerUtils.heal(p);
@@ -364,13 +387,10 @@ public class GameManager {
 
         String extra = "";
         if (isBuilding()) {
-            extra = "§eArenen werden gebaut: §f" + buildJob.progressPercent() + "%";
+            extra = "Arenen werden gebaut: " + buildJob.progressPercent() + "%";
         } else if (phase == GamePhase.BATTLE && battle != null) {
-            int activeMatches = battle.matches().size();
-            int totalMobs = 0;
-            for (var m : battle.matches()) totalMobs += m.spawner.aliveMobs.size();
-            extra = "§7Runde §f" + (battle.round() + 1) + " §7| §f" + activeMatches
-                + " §7Arenen aktiv §7| §cMobs insgesamt: §f" + totalMobs;
+            // Global boss bar is hidden during BATTLE (per-match bars active).
+            // No extra needed.
         }
         bossBar.update(server, phase, phaseTicksRemaining, phaseTicksTotal, extra);
 
@@ -430,14 +450,6 @@ public class GameManager {
         if (nbt != null) {
             t.killedNbts.computeIfAbsent(type, k -> new ArrayList<>()).add(nbt);
         }
-        t.score += 1;
-    }
-
-    public void onPlayerDeath(ServerPlayerEntity player) {
-        // Veraltet: Spielertod wird nicht mehr abgefangen. Vanilla regelt
-        // alles (Totem, keepInventory in Arena-Dim, Respawn am Team-Spawn,
-        // der in BattleController.startRound gesetzt wird). Diese Methode
-        // bleibt nur als API-Stub für externe Aufrufer (no-op).
     }
 
     private void broadcast(MinecraftServer server, Text t) {

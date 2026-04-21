@@ -39,27 +39,32 @@ public class PhaseBossBar {
             }
             case FARM -> {
                 int s = Math.max(0, remainingTicks / 20);
-                String name = "🌾 FARM  §7— §a" + formatTime(s) + "§7 verbleibend";
-                if (extra != null && !extra.isEmpty()) name += "  §7| " + extra;
-                bar.setName(Text.literal(name).formatted(Formatting.GREEN));
+                Text name = Text.literal("🌾 FARM  ").formatted(Formatting.GREEN)
+                    .append(Text.literal("— ").formatted(Formatting.GRAY))
+                    .append(Text.literal(formatTime(s)).formatted(Formatting.GREEN))
+                    .append(Text.literal(" verbleibend").formatted(Formatting.GRAY));
+                if (extra != null && !extra.isEmpty()) {
+                    name = name.copy().append(Text.literal("  | ").formatted(Formatting.GRAY))
+                        .append(Text.literal(extra).formatted(Formatting.YELLOW));
+                }
+                bar.setName(name);
                 bar.setColor(BossBar.Color.GREEN);
                 bar.setPercent(safePct(remainingTicks, totalTicks));
                 bar.setVisible(true);
             }
             case ARRANGE -> {
                 int s = Math.max(0, remainingTicks / 20);
-                bar.setName(Text.literal("🧩 ANORDNEN  §7— §e" + formatTime(s) + "§7 verbleibend").formatted(Formatting.YELLOW));
+                bar.setName(Text.literal("🧩 ANORDNEN  ").formatted(Formatting.YELLOW)
+                    .append(Text.literal("— ").formatted(Formatting.GRAY))
+                    .append(Text.literal(formatTime(s)).formatted(Formatting.YELLOW))
+                    .append(Text.literal(" verbleibend").formatted(Formatting.GRAY)));
                 bar.setColor(BossBar.Color.YELLOW);
                 bar.setPercent(safePct(remainingTicks, totalTicks));
                 bar.setVisible(true);
             }
             case BATTLE -> {
-                String name = "⚔ BATTLE";
-                if (extra != null && !extra.isEmpty()) name += "  §7" + extra;
-                bar.setName(Text.literal(name).formatted(Formatting.RED));
-                bar.setColor(BossBar.Color.RED);
-                bar.setPercent(1f);
-                bar.setVisible(true);
+                // Each MatchInstance has its own per-team boss bar; hide the global one.
+                bar.setVisible(false);
             }
             case END -> {
                 bar.setName(Text.literal("🏆 SPIEL VORBEI").formatted(Formatting.GOLD));

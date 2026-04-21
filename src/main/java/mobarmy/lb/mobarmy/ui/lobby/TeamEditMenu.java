@@ -148,6 +148,7 @@ public class TeamEditMenu implements NamedScreenHandlerFactory {
             }
             ServerPlayerEntity sp = players.get(i);
             ItemStack head = new ItemStack(Items.PLAYER_HEAD);
+            head.set(DataComponentTypes.PROFILE, ProfileComponent.ofStatic(sp.getGameProfile()));
             String playerName = sp.getName().getString();
             Team theirs = mod.teams.get(sp);
             String teamLabel;

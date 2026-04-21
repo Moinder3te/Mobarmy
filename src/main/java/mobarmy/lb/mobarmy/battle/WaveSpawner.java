@@ -74,6 +74,8 @@ public class WaveSpawner {
     public void tick(ServerWorld world, MobarmyConfig cfg) {
         if (pending.isEmpty()) return;
         if (pendingArena == null) { pending.clear(); return; }
+        // Re-validate targets: remove disconnected/removed players.
+        pendingTargets.removeIf(p -> p.isDisconnected() || p.isRemoved());
         Random rng = world.getRandom();
         int budget = Math.max(1, cfg.mobSpawnsPerTick);
         int max = Math.max(1, cfg.maxAliveMobs);

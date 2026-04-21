@@ -28,7 +28,6 @@ public class Team {
     /** Wave assignments: index 0..waveCount-1, each list = entities to spawn. */
     public final List<List<EntityType<?>>> waves = new ArrayList<>();
 
-    public int score = 0;
     public boolean wavesSubmitted = false;
 
     public Team(String name, Formatting color) {
@@ -41,7 +40,6 @@ public class Team {
         killedBabies.clear();
         killedNbts.clear();
         waves.clear();
-        score = 0;
         wavesSubmitted = false;
         backpack.clear();
     }

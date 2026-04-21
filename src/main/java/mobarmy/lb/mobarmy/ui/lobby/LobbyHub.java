@@ -85,7 +85,8 @@ public class LobbyHub implements NamedScreenHandlerFactory {
             Text.literal("Teams: ").formatted(Formatting.GRAY)
                 .append(Text.literal(String.valueOf(teams)).formatted(Formatting.WHITE)),
             Text.literal("Spieler online: ").formatted(Formatting.GRAY)
-                .append(Text.literal(playersOnline + " §8(" + playersInTeams + " im Team)").formatted(Formatting.WHITE))
+                .append(Text.literal(String.valueOf(playersOnline)).formatted(Formatting.WHITE))
+                .append(Text.literal(" (" + playersInTeams + " im Team)").formatted(Formatting.DARK_GRAY))
         ));
 
         // 3 main buttons (centered: 11, 13, 15)

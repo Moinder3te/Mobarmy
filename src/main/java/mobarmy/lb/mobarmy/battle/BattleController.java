@@ -55,6 +55,11 @@ public class BattleController {
     /** The match index (into currentMatches) that spectators are watching. -1 = none. */
     private int spectatingMatchIdx = -1;
 
+    /** All match results across all rounds — used by GameStats at game end. */
+    private final List<MatchResult> allResults = new ArrayList<>();
+
+    public List<MatchResult> allResults() { return List.copyOf(allResults); }
+
     public BattleController(MobarmyMod mod, List<Team> teams, List<Arena> teamArenas,
                             ServerWorld world, MobarmyConfig cfg) {
         this.mod = mod;
@@ -127,6 +132,8 @@ public class BattleController {
                 PlayerUtils.setMode(p, GameMode.SURVIVAL);
                 PlayerUtils.heal(p);
                 inventorySnapshot.restore(p);
+                // Give the Mob Tracker compass.
+                p.getInventory().setStack(8, MobTracker.create());
                 PlayerUtils.teleport(p, world, arena.spawnA);
                 // Pro-Team Respawn-Punkt: stirbt der Spieler in der Arena,
                 // bringt ihn der Vanilla-Respawn (sofort, mit keepInventory +
@@ -255,6 +262,10 @@ public class BattleController {
         }
 
         if (allFinished) {
+            // Capture results before clearing matches.
+            for (MatchInstance m : currentMatches) {
+                allResults.add(MatchResult.from(m, round));
+            }
             for (MatchInstance m : currentMatches) m.spawner.clear(world);
             waitingForNextRound = true;
             spectatingTeams.clear();

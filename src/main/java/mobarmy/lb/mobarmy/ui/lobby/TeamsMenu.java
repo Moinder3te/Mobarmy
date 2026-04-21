@@ -29,6 +29,9 @@ import java.util.List;
 public class TeamsMenu implements NamedScreenHandlerFactory {
 
     private final MobarmyMod mod;
+    /** Tracks pending delete: team name awaiting confirmation, null = none. */
+    private String pendingDeleteTeam = null;
+
     public TeamsMenu(MobarmyMod mod) { this.mod = mod; }
 
     @Override
@@ -78,11 +81,19 @@ public class TeamsMenu implements NamedScreenHandlerFactory {
             Team t = teams.get(idx);
             if (button == 0) {
                 // Left click → open team detail
+                pendingDeleteTeam = null;
                 p.openHandledScreen(new TeamEditMenu(mod, t.name));
             } else if (button == 1) {
-                // Right click → delete team
-                mod.teams.remove(t.name);
-                p.sendMessage(Text.literal("Team " + t.name + " gelöscht.").formatted(Formatting.RED), false);
+                // Right click → delete team (with confirmation)
+                if (t.name.equals(pendingDeleteTeam)) {
+                    mod.teams.remove(t.name);
+                    p.sendMessage(Text.literal("Team " + t.name + " gelöscht.").formatted(Formatting.RED), false);
+                    pendingDeleteTeam = null;
+                } else {
+                    pendingDeleteTeam = t.name;
+                    p.sendMessage(Text.literal("Nochmal Rechtsklick auf " + t.name + " zum Bestätigen!")
+                        .formatted(Formatting.RED, Formatting.BOLD), false);
+                }
             }
         }
     }
