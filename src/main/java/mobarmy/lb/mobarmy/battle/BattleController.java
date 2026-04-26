@@ -7,6 +7,7 @@ import mobarmy.lb.mobarmy.config.MobarmyConfig;
 import mobarmy.lb.mobarmy.team.Team;
 import mobarmy.lb.mobarmy.util.InventorySnapshot;
 import mobarmy.lb.mobarmy.util.PlayerUtils;
+import net.minecraft.item.ItemStack;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
@@ -20,6 +21,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.world.GameMode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,6 +43,8 @@ public class BattleController {
     private final ServerWorld world;
     private final MobarmyConfig cfg;
     private final InventorySnapshot inventorySnapshot = new InventorySnapshot();
+    /** Per-team backpack snapshot taken at battle start, restored each round. */
+    private final java.util.Map<String, ItemStack[]> backpackSnapshots = new java.util.HashMap<>();
 
     /** teamArenas.get(i) = fixed arena for teams.get(i). Built externally and
      *  injected here by GameManager — we never construct or rebuild them. */
@@ -70,7 +74,7 @@ public class BattleController {
     }
 
     public int round() { return round; }
-    public List<MatchInstance> matches() { return List.copyOf(currentMatches); }
+    public List<MatchInstance> matches() { return Collections.unmodifiableList(currentMatches); }
 
     public boolean finished() {
         return round >= teams.size() - 1 && currentMatches.isEmpty() && !waitingForNextRound;
@@ -80,8 +84,9 @@ public class BattleController {
         round = 0;
         currentMatches.clear();
 
-        // Snapshot every player's farm-phase inventory once.
+        // Snapshot every player's farm-phase inventory and team backpacks once.
         for (Team t : teams) {
+            backpackSnapshots.put(t.name, t.backpack.snapshot());
             for (UUID u : t.members) {
                 ServerPlayerEntity p = world.getServer().getPlayerManager().getPlayer(u);
                 if (p != null) inventorySnapshot.snapshot(p);
@@ -122,6 +127,10 @@ public class BattleController {
             Arena arena = teamArenas.get(i);
             // Only clear interior for rounds > 0 (first round uses a freshly-built arena).
             if (r > 0) cleanArenaInterior(arena);
+
+            // Restore backpack to pre-round state.
+            ItemStack[] bpSnap = backpackSnapshots.get(att.name);
+            if (bpSnap != null) att.backpack.restore(bpSnap);
 
             MatchInstance m = new MatchInstance(att, def, arena);
             currentMatches.add(m);

@@ -16,6 +16,9 @@ import java.util.*;
  */
 public class BlockRandomizer {
     private final Map<Block, ItemStack> mapping = new IdentityHashMap<>();
+    /** Item→Item mapping for chest loot. BlockItems reuse the block mapping;
+     *  non-block items get an independent random mapping (same RNG stream). */
+    private final Map<Item, ItemStack> itemMapping = new IdentityHashMap<>();
     private long seed;
 
     public long seed() { return seed; }
@@ -23,6 +26,7 @@ public class BlockRandomizer {
     public void init(long seed) {
         this.seed = seed;
         mapping.clear();
+        itemMapping.clear();
 
         // --- source blocks (what you can break) ---
         List<Block> sources = new ArrayList<>();
@@ -43,6 +47,19 @@ public class BlockRandomizer {
             Item tgt = targets.get(rng.nextInt(targets.size()));
             mapping.put(src, new ItemStack(tgt));
         }
+
+        // Build item→item mapping for chest loot randomization.
+        // BlockItems whose block is in the block mapping reuse that target
+        // (so Stone→Diamond in blocks means Stone-item→Diamond in chests).
+        // All other items get an independent random mapping.
+        for (Item src : targets) {
+            if (src instanceof net.minecraft.item.BlockItem bi && mapping.containsKey(bi.getBlock())) {
+                itemMapping.put(src, mapping.get(bi.getBlock()).copy());
+            } else {
+                Item tgt = targets.get(rng.nextInt(targets.size()));
+                itemMapping.put(src, new ItemStack(tgt));
+            }
+        }
     }
 
     public ItemStack getDrop(Block b) {
@@ -51,6 +68,14 @@ public class BlockRandomizer {
     }
 
     public boolean has(Block b) { return mapping.containsKey(b); }
+
+    /** Get the randomized item for chest loot. */
+    public ItemStack getItemDrop(Item i) {
+        ItemStack s = itemMapping.get(i);
+        return s == null ? ItemStack.EMPTY : s.copy();
+    }
+
+    public boolean hasItem(Item i) { return itemMapping.containsKey(i); }
 
     public int mappingSize() { return mapping.size(); }
 

@@ -36,6 +36,16 @@ public class MobarmyCommand {
                 mobarmy.lb.mobarmy.ui.lobby.LobbyHub.open(sp, mod);
                 return 1;
             }))
+            .then(CommandManager.literal("cheatsheet").executes(ctx -> {
+                ServerPlayerEntity sp = ctx.getSource().getPlayer();
+                if (sp == null) return 0;
+                if (!mod.randomizerManager.hasAnyRandomizer()) {
+                    ctx.getSource().sendFeedback(() -> Text.literal("Kein aktiver Randomizer — starte zuerst ein Spiel.").formatted(Formatting.RED), false);
+                    return 0;
+                }
+                mobarmy.lb.mobarmy.ui.cheatsheet.CheatSheetMenu.open(sp, mod);
+                return 1;
+            }))
             .then(CommandManager.literal("stats").executes(ctx -> {
                 ServerPlayerEntity sp = ctx.getSource().getPlayer();
                 if (sp == null) return 0;
@@ -59,6 +69,10 @@ public class MobarmyCommand {
                 // Force-advance to next phase
                 var gm = mod.gameManager;
                 var srv = ctx.getSource().getServer();
+                if (gm.isBuilding()) {
+                    ctx.getSource().sendFeedback(() -> Text.literal("Arenen werden noch gebaut — bitte warten.").formatted(Formatting.RED), false);
+                    return 0;
+                }
                 switch (gm.phase()) {
                     case FARM -> gm.startArrange(srv);
                     case ARRANGE -> gm.startBattle(srv);

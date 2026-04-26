@@ -63,6 +63,16 @@ public class MatchInstance {
     /** Whether we've already broadcast the wipe / victory message. */
     private boolean ended = false;
 
+    // =================== PAUSE (all offline) ===================
+    /** True while every team member is offline — match is frozen. */
+    private boolean paused = false;
+    /** Accumulated ticks spent paused — subtracted from total time. */
+    private long pausedTicks = 0;
+    /** Pause ticks accumulated during the current wave only. */
+    private long wavePausedTicks = 0;
+    /** Server tick when the current pause started (-1 = not paused). */
+    private long pauseStartTick = -1;
+
     /** Per-match boss bar visible only to this team's players. */
     private final ServerBossBar matchBar;
 
@@ -79,6 +89,43 @@ public class MatchInstance {
     /** Called every server tick by the BattleController. */
     public void tick(ServerWorld world, MobarmyMod mod) {
         if (finished) return;
+
+        // ===== PAUSE: all team members offline → freeze match =====
+        boolean anyOnline = !onlineAttackers(world.getServer()).isEmpty();
+        if (!anyOnline && !paused) {
+            // Enter pause.
+            paused = true;
+            pauseStartTick = world.getServer().getTicks();
+            matchBar.setName(Text.literal("⏸ Pausiert — Warte auf Spieler…")
+                .formatted(Formatting.GRAY, Formatting.ITALIC));
+            matchBar.setColor(BossBar.Color.WHITE);
+            MobarmyMod.LOG.info("[Battle] {} vs {}: PAUSED (all offline)",
+                attacker.name, defender.name);
+            return;
+        }
+        if (paused) {
+            if (!anyOnline) return; // still paused
+            // Resume: player came back online.
+            long now = world.getServer().getTicks();
+            long thisPause = now - pauseStartTick;
+            pausedTicks += thisPause;
+            wavePausedTicks += thisPause;
+            pauseStartTick = -1;
+            paused = false;
+            matchBar.setColor(BossBar.Color.RED);
+            MobarmyMod.LOG.info("[Battle] {} vs {}: RESUMED (paused {} ticks)",
+                attacker.name, defender.name, pausedTicks);
+            // Re-teleport returning players to arena.
+            for (ServerPlayerEntity p : onlineAttackers(world.getServer())) {
+                if (!arena.contains(p.getX(), p.getY(), p.getZ())) {
+                    mobarmy.lb.mobarmy.util.PlayerUtils.heal(p);
+                    mobarmy.lb.mobarmy.util.PlayerUtils.setMode(p, GameMode.SURVIVAL);
+                    mobarmy.lb.mobarmy.util.PlayerUtils.teleport(p, world, arena.spawnA);
+                    MobTracker.removeAll(p);
+                    p.getInventory().setStack(8, MobTracker.create());
+                }
+            }
+        }
 
         // Update per-match boss bar: ensure team players are tracked and show wave info.
         updateMatchBar(world.getServer(), mod);
@@ -121,7 +168,8 @@ public class MatchInstance {
         if (waitingForWave && spawner.isWaveCleared()) {
             waitingForWave = false;
             long now = world.getServer().getTicks();
-            long waveDuration = waveStartTick > 0 ? now - waveStartTick : 0;
+            long waveDuration = waveStartTick > 0 ? (now - waveStartTick) - wavePausedTicks : 0;
+            if (waveDuration < 0) waveDuration = 0;
             waveTimes.add(waveDuration);
             String timeStr = formatTicks(waveDuration);
             broadcastToTeam(world.getServer(), attacker,
@@ -144,7 +192,11 @@ public class MatchInstance {
         this.cleared = allCleared;
         this.matchEndTick = srv.getTicks();
         if (matchStartTick > 0) {
-            this.totalTimeTicks = matchEndTick - matchStartTick;
+            this.totalTimeTicks = (matchEndTick - matchStartTick) - pausedTicks;
+            if (this.totalTimeTicks < 0) this.totalTimeTicks = 0;
+        } else if (allCleared) {
+            // All waves were empty / won by default → instant clear.
+            this.totalTimeTicks = 0;
         }
         finished = true;
         // Remove boss bar and mob tracker from all players.
@@ -158,6 +210,12 @@ public class MatchInstance {
     public void onPlayerDeath() {
         if (finished) return;
         deaths++;
+    }
+
+    /** Force-cleanup boss bar (used by resetToLobby when match is aborted). */
+    public void forceCleanup() {
+        matchBar.setVisible(false);
+        matchBar.clearPlayers();
     }
 
     private void startWave(ServerWorld world, MobarmyMod mod) {
@@ -182,6 +240,7 @@ public class MatchInstance {
         long now = world.getServer().getTicks();
         if (matchStartTick < 0) matchStartTick = now;
         waveStartTick = now;
+        wavePausedTicks = 0;
         List<ServerPlayerEntity> targets = onlineAttackers(world.getServer());
         MobarmyMod.LOG.info("[Battle] {} vs {}: starting wave {} with {} mobs, {} targets",
             attacker.name, defender.name, waveIndex + 1, mobs.size(), targets.size());

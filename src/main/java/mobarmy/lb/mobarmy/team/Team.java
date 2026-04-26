@@ -20,10 +20,13 @@ public class Team {
     /** Subset of killedMobs: how many of those kills were baby variants (UI hint). */
     public final Object2IntOpenHashMap<EntityType<?>> killedBabies = new Object2IntOpenHashMap<>();
 
-    /** Per-type bag of NBT snapshots taken at kill-time. The wave spawner picks
-     *  one at random when spawning a mob of that type, so wolf variants, frog
-     *  colours, cat skins, horse coats etc. are preserved exactly. */
+    /** Per-type bag of UNIQUE NBT variant snapshots taken at kill-time. The wave
+     *  spawner picks one at random when spawning a mob of that type, so wolf
+     *  variants, frog colours, cat skins, horse coats etc. are preserved exactly.
+     *  Deduplicated by hash — only distinct variants are stored. */
     public final Map<EntityType<?>, List<NbtCompound>> killedNbts = new HashMap<>();
+    /** Hashes of already-stored NBT variants per mob type (dedup guard). */
+    public final Map<EntityType<?>, Set<Integer>> nbtHashes = new HashMap<>();
 
     /** Wave assignments: index 0..waveCount-1, each list = entities to spawn. */
     public final List<List<EntityType<?>>> waves = new ArrayList<>();
@@ -39,6 +42,7 @@ public class Team {
         killedMobs.clear();
         killedBabies.clear();
         killedNbts.clear();
+        nbtHashes.clear();
         waves.clear();
         wavesSubmitted = false;
         backpack.clear();

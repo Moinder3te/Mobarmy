@@ -86,7 +86,9 @@ public class LobbyHub implements NamedScreenHandlerFactory {
                 .append(Text.literal(String.valueOf(teams)).formatted(Formatting.WHITE)),
             Text.literal("Spieler online: ").formatted(Formatting.GRAY)
                 .append(Text.literal(String.valueOf(playersOnline)).formatted(Formatting.WHITE))
-                .append(Text.literal(" (" + playersInTeams + " im Team)").formatted(Formatting.DARK_GRAY))
+                .append(Text.literal(" (" + playersInTeams + " im Team)").formatted(Formatting.DARK_GRAY)),
+            Text.literal("Randomizer: ").formatted(Formatting.GRAY)
+                .append(Text.literal(mod.config.randomizerMode.displayName).formatted(Formatting.AQUA))
         ));
 
         // 3 main buttons (centered: 11, 13, 15)

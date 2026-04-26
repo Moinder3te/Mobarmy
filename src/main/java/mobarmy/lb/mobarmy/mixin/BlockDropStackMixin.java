@@ -2,6 +2,7 @@ package mobarmy.lb.mobarmy.mixin;
 
 import mobarmy.lb.mobarmy.MobarmyMod;
 import mobarmy.lb.mobarmy.game.GamePhase;
+import mobarmy.lb.mobarmy.randomizer.BlockRandomizer;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.entity.BlockEntity;
@@ -11,6 +12,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemStack;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
@@ -54,6 +56,10 @@ public abstract class BlockDropStackMixin {
     @Unique
     private static final ThreadLocal<Block> mobarmy$trackedBlock = new ThreadLocal<>();
 
+    /** The entity that broke the block (available from the 6-arg dropStacks). */
+    @Unique
+    private static final ThreadLocal<Entity> mobarmy$breakingEntity = new ThreadLocal<>();
+
     // ====================== dropStacks: HEAD = start tracking ======================
 
     @Inject(
@@ -62,6 +68,7 @@ public abstract class BlockDropStackMixin {
     )
     private static void mobarmy$trackStart6(BlockState state, World world, BlockPos pos,
                                              BlockEntity be, Entity entity, ItemStack tool, CallbackInfo ci) {
+        mobarmy$breakingEntity.set(entity);
         mobarmy$beginTracking(state, world, pos);
     }
 
@@ -70,6 +77,7 @@ public abstract class BlockDropStackMixin {
         at = @At("HEAD")
     )
     private static void mobarmy$trackStart3(BlockState state, World world, BlockPos pos, CallbackInfo ci) {
+        mobarmy$breakingEntity.remove();
         mobarmy$beginTracking(state, world, pos);
     }
 
@@ -98,7 +106,7 @@ public abstract class BlockDropStackMixin {
         MobarmyMod mod = MobarmyMod.INSTANCE;
         if (mod == null || mod.gameManager == null) return;
         if (!mod.gameManager.isPhase(GamePhase.FARM)) return;
-        if (!mod.randomizer.has(state.getBlock())) return;
+        if (!mod.randomizerManager.has(state.getBlock())) return;
         int[] t = mobarmy$tracker.get();
         t[0] = 0; // start counting
         t[1] = pos.getX();
@@ -115,18 +123,27 @@ public abstract class BlockDropStackMixin {
         t[0] = -1; // reset
         Block block = mobarmy$trackedBlock.get();
         mobarmy$trackedBlock.remove();
+        Entity breaker = mobarmy$breakingEntity.get();
+        mobarmy$breakingEntity.remove();
         if (count > 0) return; // Vanilla hat Drops erzeugt → bereits in dropStack randomisiert
         // Vanilla hat 0 Drops erzeugt → Force-Drop eines randomisierten Items
         if (block == null) return;
         MobarmyMod mod = MobarmyMod.INSTANCE;
         if (mod == null || mod.gameManager == null) return;
-        if (!mod.randomizer.has(block)) return;
-        ItemStack mapped = mod.randomizer.getDrop(block);
+        ServerPlayerEntity player = breaker instanceof ServerPlayerEntity sp ? sp : null;
+        BlockRandomizer randomizer = mod.randomizerManager.getFor(player);
+        if (randomizer == null || !randomizer.has(block)) return;
+        ItemStack mapped = randomizer.getDrop(block);
         if (mapped.isEmpty()) return;
         ItemEntity ie = new ItemEntity(world,
             t[1] + 0.5, t[2] + 0.5, t[3] + 0.5, mapped.copy());
         ie.setToDefaultPickupDelay();
         world.spawnEntity(ie);
+        // Track discovery for force-drops.
+        if (player != null) {
+            mod.randomizerManager.recordDiscovery(
+                mod.randomizerManager.scopeKey(player), block, mapped.getItem());
+        }
     }
 
     // ====================== dropStack: randomize + count ======================
@@ -186,24 +203,39 @@ public abstract class BlockDropStackMixin {
         if (!mod.gameManager.isPhase(GamePhase.FARM)) return null;
         if (stack == null || stack.isEmpty()) return null;
 
+        // Get the right randomizer for the player who broke the block.
+        Entity breaker = mobarmy$breakingEntity.get();
+        ServerPlayerEntity player = breaker instanceof ServerPlayerEntity sp ? sp : null;
+        BlockRandomizer randomizer = mod.randomizerManager.getFor(player);
+        if (randomizer == null) return null;
+
         // Primär: den gebrochenen Block verwenden (gesetzt in beginTracking).
         Block sourceBlock = mobarmy$trackedBlock.get();
-        if (sourceBlock != null && mod.randomizer.has(sourceBlock)) {
-            ItemStack mapped = mod.randomizer.getDrop(sourceBlock);
+        if (sourceBlock != null && randomizer.has(sourceBlock)) {
+            ItemStack mapped = randomizer.getDrop(sourceBlock);
             if (mapped.isEmpty()) return null;
             ItemStack swap = mapped.copy();
             swap.setCount(stack.getCount());
+            // Track discovery.
+            if (player != null) {
+                mod.randomizerManager.recordDiscovery(
+                    mod.randomizerManager.scopeKey(player), sourceBlock, mapped.getItem());
+            }
             return swap;
         }
 
         // Fallback für standalone dropStack-Aufrufe außerhalb von dropStacks:
         // Nur BlockItems randomisieren.
         if (!(stack.getItem() instanceof BlockItem bi)) return null;
-        if (!mod.randomizer.has(bi.getBlock())) return null;
-        ItemStack mapped = mod.randomizer.getDrop(bi.getBlock());
+        if (!randomizer.has(bi.getBlock())) return null;
+        ItemStack mapped = randomizer.getDrop(bi.getBlock());
         if (mapped.isEmpty()) return null;
         ItemStack swap = mapped.copy();
         swap.setCount(stack.getCount());
+        if (player != null) {
+            mod.randomizerManager.recordDiscovery(
+                mod.randomizerManager.scopeKey(player), bi.getBlock(), mapped.getItem());
+        }
         return swap;
     }
 

@@ -21,9 +21,12 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.world.GameMode;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 
 public class GameManager {
@@ -116,10 +119,13 @@ public class GameManager {
         WaveBuilderMenu.closeAll(mod);
 
         long seed = mod.config.randomizerSeed != 0 ? mod.config.randomizerSeed : new Random().nextLong();
-        mod.randomizer.init(seed);
+        var randMode = mod.config.randomizerMode != null ? mod.config.randomizerMode
+            : mobarmy.lb.mobarmy.config.RandomizerMode.GLOBAL;
+        mod.randomizerManager.init(seed, randMode, mod.teams.all());
         mod.config.randomizerSeed = seed;
         mod.config.save(server);
-        broadcast(server, Text.literal("Block-Randomizer aktiv (Seed " + seed + ")").formatted(Formatting.AQUA));
+        String modeLabel = randMode.displayName;
+        broadcast(server, Text.literal("Block-Randomizer aktiv (Seed " + seed + ", Modus: " + modeLabel + ")").formatted(Formatting.AQUA));
 
         // NOTE: do NOT clear ArenaProtection here — buildArenas() decides
         // whether to reuse pre-built arenas, and reusing requires the
@@ -213,10 +219,19 @@ public class GameManager {
     }
 
     public void startArrange(MinecraftServer server) {
+        saveBackpacks(server);
         phase = GamePhase.ARRANGE;
         phaseTicksRemaining = mod.config.arrangeDurationSeconds * 20;
         phaseTicksTotal = phaseTicksRemaining;
         broadcast(server, Text.literal("=== ANORDNUNGS-PHASE === " + mod.config.arrangeDurationSeconds + "s").formatted(Formatting.YELLOW));
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            PlayerUtils.title(p,
+                Text.literal("FARM VORBEI").formatted(Formatting.YELLOW, Formatting.BOLD),
+                Text.literal("Ordne deine Wellen an!").formatted(Formatting.GRAY));
+            server.getOverworld().playSound(null, p.getBlockPos(),
+                net.minecraft.sound.SoundEvents.ENTITY_ENDER_DRAGON_GROWL,
+                net.minecraft.sound.SoundCategory.MASTER, 0.6f, 1.2f);
+        }
         for (Team t : mod.teams.all()) {
             while (t.waves.size() < mod.config.waveCount) t.waves.add(new ArrayList<>());
             for (UUID u : t.members) {
@@ -227,6 +242,7 @@ public class GameManager {
     }
 
     public void startBattle(MinecraftServer server) {
+        saveBackpacks(server);
         phase = GamePhase.BATTLE;
         for (Team t : mod.teams.all()) {
             while (t.waves.size() < mod.config.waveCount) t.waves.add(new ArrayList<>());
@@ -240,6 +256,14 @@ public class GameManager {
         ServerWorld world = ArenaDimension.get(server);
         battle = new BattleController(mod, mod.teams.ordered(), teamArenas, world, mod.config);
         broadcast(server, Text.literal("=== BATTLE-PHASE ===").formatted(Formatting.RED, Formatting.BOLD));
+        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+            PlayerUtils.title(p,
+                Text.literal("⚔ BATTLE ⚔").formatted(Formatting.RED, Formatting.BOLD),
+                Text.literal("Kämpfe in der Arena!").formatted(Formatting.YELLOW));
+            server.getOverworld().playSound(null, p.getBlockPos(),
+                net.minecraft.sound.SoundEvents.ENTITY_WITHER_SPAWN,
+                net.minecraft.sound.SoundCategory.MASTER, 0.5f, 1f);
+        }
         battle.start();
     }
 
@@ -248,11 +272,12 @@ public class GameManager {
         if (server == null) return;
         if (phase != GamePhase.BATTLE) return;
         phase = GamePhase.END;
+        deleteBackpackFiles(server);
 
         // Capture stats snapshot BEFORE resetting anything.
         List<mobarmy.lb.mobarmy.battle.MatchResult> allResults =
             battle != null ? battle.allResults() : List.of();
-        GameStats gameStats = new GameStats(new ArrayList<>(mod.teams.all()), allResults, mod.randomizer.seed());
+        GameStats gameStats = new GameStats(new ArrayList<>(mod.teams.all()), allResults, mod.randomizerManager.baseSeed());
         this.lastGameStats = gameStats;
 
         // ===================== SAFE TELEPORT =====================
@@ -335,6 +360,7 @@ public class GameManager {
         // Clean up any active battle: clear leftover wave mobs in every arena.
         if (battle != null) {
             for (var m : battle.matches()) {
+                try { m.forceCleanup(); } catch (Throwable ignored) {}
                 try { m.spawner.clear(arenaWorld); } catch (Throwable ignored) {}
             }
         }
@@ -355,6 +381,9 @@ public class GameManager {
         mod.config.randomizerSeed = 0;
         mod.config.save(server);
         ArenaProtection.clear();
+        mod.randomizerManager.clear();
+        mod.scheduler.clear();
+        deleteBackpackFiles(server);
         teamArenas.clear();
         arenasPrebuilt = false;
         for (Team t : mod.teams.all()) t.resetForNewGame();
@@ -396,6 +425,11 @@ public class GameManager {
 
         if (phase == GamePhase.LOBBY || phase == GamePhase.END) return;
 
+        // Auto-save backpacks every 60 seconds during FARM phase.
+        if (phase == GamePhase.FARM && server.getTicks() % 1200 == 0) {
+            saveBackpacks(server);
+        }
+
         // Fast-forward: if all teams submitted in ARRANGE, jump to battle now
         // — but only if arenas are ready.
         if (phase == GamePhase.ARRANGE && WaveBuilderMenu.allTeamsSubmitted(mod) && !isBuilding()) {
@@ -407,7 +441,22 @@ public class GameManager {
             phaseTicksRemaining--;
             if (phaseTicksRemaining % 20 == 0 && phaseTicksRemaining <= 200) {
                 int s = phaseTicksRemaining / 20;
-                if (s > 0) broadcast(server, Text.literal(phase.name() + " endet in " + s + "s").formatted(Formatting.GRAY));
+                if (s > 0) {
+                    broadcast(server, Text.literal(phase.name() + " endet in " + s + "s").formatted(Formatting.GRAY));
+                    // Sound + Title for final countdown
+                    if (s <= 5) {
+                        for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
+                            server.getOverworld().playSound(null, p.getBlockPos(),
+                                net.minecraft.sound.SoundEvents.BLOCK_NOTE_BLOCK_PLING.value(),
+                                net.minecraft.sound.SoundCategory.MASTER, 0.8f, s == 1 ? 1.5f : 1f);
+                            if (s <= 3) {
+                                PlayerUtils.title(p,
+                                    Text.literal(String.valueOf(s)).formatted(Formatting.RED, Formatting.BOLD),
+                                    Text.literal(phase.name() + " endet gleich!").formatted(Formatting.GRAY));
+                            }
+                        }
+                    }
+                }
             }
             if (phaseTicksRemaining == 0) {
                 // Don't transition into BATTLE while arenas are still building.
@@ -448,12 +497,70 @@ public class GameManager {
         // markings, villager profession/biome, baby flag, etc.).
         net.minecraft.nbt.NbtCompound nbt = mobarmy.lb.mobarmy.util.MobUtils.snapshotVariantNbt(mob);
         if (nbt != null) {
-            t.killedNbts.computeIfAbsent(type, k -> new ArrayList<>()).add(nbt);
+            // Strip instance-specific fields so only variant data remains for hashing.
+            net.minecraft.nbt.NbtCompound forHash = nbt.copy();
+            forHash.remove("UUID"); forHash.remove("Pos"); forHash.remove("Motion");
+            forHash.remove("Rotation"); forHash.remove("FallDistance"); forHash.remove("Fire");
+            forHash.remove("Air"); forHash.remove("OnGround"); forHash.remove("PortalCooldown");
+            forHash.remove("TicksFrozen"); forHash.remove("Health"); forHash.remove("HurtTime");
+            forHash.remove("HurtByTimestamp"); forHash.remove("DeathTime"); forHash.remove("AbsorptionAmount");
+            forHash.remove("Brain"); forHash.remove("Leash"); forHash.remove("SleepingX");
+            forHash.remove("SleepingY"); forHash.remove("SleepingZ");
+            int hash = forHash.toString().hashCode();
+            Set<Integer> seen = t.nbtHashes.computeIfAbsent(type, k -> new java.util.HashSet<>());
+            if (seen.add(hash)) {
+                t.killedNbts.computeIfAbsent(type, k -> new ArrayList<>()).add(nbt);
+            }
         }
     }
 
     private void broadcast(MinecraftServer server, Text t) {
         if (server != null) server.getPlayerManager().broadcast(t, false);
+    }
+
+    // ===================== BACKPACK PERSISTENCE =====================
+
+    private static Path backpackDir(MinecraftServer server) {
+        return server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("mobarmy_backpacks");
+    }
+
+    /** Save all team backpacks to disk. */
+    public void saveBackpacks(MinecraftServer server) {
+        for (Team t : mod.teams.all()) {
+            try {
+                t.backpack.save(backpackDir(server).resolve(t.name + ".dat"),
+                    server.getRegistryManager());
+            } catch (Exception e) {
+                MobarmyMod.LOG.error("Failed to save backpack for team {}", t.name, e);
+            }
+        }
+    }
+
+    /** Load all team backpacks from disk. */
+    public void loadBackpacks(MinecraftServer server) {
+        for (Team t : mod.teams.all()) {
+            try {
+                t.backpack.load(backpackDir(server).resolve(t.name + ".dat"),
+                    server.getRegistryManager());
+            } catch (Exception e) {
+                MobarmyMod.LOG.error("Failed to load backpack for team {}", t.name, e);
+            }
+        }
+    }
+
+    /** Delete all backpack files from disk. */
+    public void deleteBackpackFiles(MinecraftServer server) {
+        Path dir = backpackDir(server);
+        try {
+            if (Files.exists(dir)) {
+                try (var stream = Files.list(dir)) {
+                    stream.forEach(f -> { try { Files.deleteIfExists(f); } catch (Exception ignored) {} });
+                }
+                Files.deleteIfExists(dir);
+            }
+        } catch (Exception e) {
+            MobarmyMod.LOG.error("Failed to delete backpack files", e);
+        }
     }
 }
 

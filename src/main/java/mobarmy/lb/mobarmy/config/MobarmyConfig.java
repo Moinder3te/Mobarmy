@@ -53,6 +53,7 @@ public class MobarmyConfig {
     public BlockPosJson mobSpawnCenter = new BlockPosJson(0, 131, 0);
 
     public long randomizerSeed = 0L; // 0 = random
+    public RandomizerMode randomizerMode = RandomizerMode.GLOBAL;
     public boolean buildArenaOnStart = true;
 
     public static class BlockPosJson {
@@ -72,6 +73,8 @@ public class MobarmyConfig {
             String json = Files.readString(file);
             MobarmyConfig cfg = GSON.fromJson(json, MobarmyConfig.class);
             if (cfg == null) cfg = new MobarmyConfig();
+            // Null safety for enum fields from old configs.
+            if (cfg.randomizerMode == null) cfg.randomizerMode = RandomizerMode.GLOBAL;
             return cfg;
         } catch (IOException e) {
             MobarmyRef.LOG.error("Failed to load config", e);

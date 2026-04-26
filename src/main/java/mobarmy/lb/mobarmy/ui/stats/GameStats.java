@@ -108,7 +108,7 @@ public class GameStats {
             if (results.isEmpty()) sumTime = Long.MAX_VALUE;
             for (MatchResult r : results) {
                 roundList.add(new RoundResult(r));
-                if (r.cleared()) {
+                if (r.cleared() && sumTime < Long.MAX_VALUE) {
                     sumTime += r.totalTimeTicks();
                 } else {
                     cleared = false;

@@ -9,7 +9,7 @@ import mobarmy.lb.mobarmy.commands.TeamCommand;
 import mobarmy.lb.mobarmy.config.MobarmyConfig;
 import mobarmy.lb.mobarmy.game.GameManager;
 import mobarmy.lb.mobarmy.game.GamePhase;
-import mobarmy.lb.mobarmy.randomizer.BlockRandomizer;
+import mobarmy.lb.mobarmy.randomizer.RandomizerManager;
 import mobarmy.lb.mobarmy.team.TeamManager;
 import mobarmy.lb.mobarmy.util.TaskScheduler;
 import net.fabricmc.api.ModInitializer;
@@ -34,7 +34,7 @@ public class MobarmyMod implements ModInitializer {
     public MinecraftServer server;
     public MobarmyConfig config = new MobarmyConfig();
     public final TeamManager teams = new TeamManager();
-    public final BlockRandomizer randomizer = new BlockRandomizer();
+    public final RandomizerManager randomizerManager = new RandomizerManager();
     public final TaskScheduler scheduler = new TaskScheduler();
     public final GameManager gameManager = new GameManager(this);
 
@@ -46,7 +46,9 @@ public class MobarmyMod implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(srv -> {
             this.server = srv;
             this.config = MobarmyConfig.load(srv);
-            if (config.randomizerSeed != 0) randomizer.init(config.randomizerSeed);
+            if (config.randomizerSeed != 0) {
+                randomizerManager.init(config.randomizerSeed, config.randomizerMode, java.util.List.of());
+            }
             // Defense-in-depth: lock down arena dimension immediately on
             // startup, so even before the first /mobarmy prepare runs no
             // natural mob spawning, weather or fire-tick can kick in.
