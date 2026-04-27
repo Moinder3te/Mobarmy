@@ -20,6 +20,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.world.GameMode;
+import net.minecraft.world.rule.GameRules;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -108,6 +109,12 @@ public class GameManager {
         if (mod.teams.size() < 2) {
             broadcast(server, Text.literal("Mindestens 2 Teams nötig!").formatted(Formatting.RED));
             return;
+        }
+        for (Team t : mod.teams.all()) {
+            if (t.members.isEmpty()) {
+                broadcast(server, Text.literal("Team " + t.name + " hat keine Spieler! Entferne es oder füge Spieler hinzu.").formatted(Formatting.RED));
+                return;
+            }
         }
         // Prevent racing with an in-flight /mobarmy prepare build (would
         // produce half-built arenas and a stale ArenaProtection map).
@@ -256,6 +263,10 @@ public class GameManager {
         ServerWorld world = ArenaDimension.get(server);
         battle = new BattleController(mod, mod.teams.ordered(), teamArenas, world, mod.config);
         broadcast(server, Text.literal("=== BATTLE-PHASE ===").formatted(Formatting.RED, Formatting.BOLD));
+
+        // Enable keepInventory + instant respawn for BATTLE (global gamerules).
+        setBattleGamerules(server, true);
+
         for (ServerPlayerEntity p : server.getPlayerManager().getPlayerList()) {
             PlayerUtils.title(p,
                 Text.literal("⚔ BATTLE ⚔").formatted(Formatting.RED, Formatting.BOLD),
@@ -273,6 +284,9 @@ public class GameManager {
         if (phase != GamePhase.BATTLE) return;
         phase = GamePhase.END;
         deleteBackpackFiles(server);
+
+        // Disable keepInventory + instant respawn now that BATTLE is over.
+        setBattleGamerules(server, false);
 
         // Capture stats snapshot BEFORE resetting anything.
         List<mobarmy.lb.mobarmy.battle.MatchResult> allResults =
@@ -378,6 +392,11 @@ public class GameManager {
 
         phase = GamePhase.LOBBY;
         battle = null;
+        bossBar.clear();
+
+        // Ensure battle gamerules are off (in case resetToLobby is called mid-battle).
+        setBattleGamerules(server, false);
+
         mod.config.randomizerSeed = 0;
         mod.config.save(server);
         ArenaProtection.clear();
@@ -546,6 +565,13 @@ public class GameManager {
                 MobarmyMod.LOG.error("Failed to load backpack for team {}", t.name, e);
             }
         }
+    }
+
+    /** Toggle keepInventory + instant respawn (global gamerules). */
+    private void setBattleGamerules(MinecraftServer server, boolean on) {
+        GameRules gr = server.getOverworld().getGameRules();
+        gr.setValue(GameRules.KEEP_INVENTORY, on, server);
+        gr.setValue(GameRules.DO_IMMEDIATE_RESPAWN, on, server);
     }
 
     /** Delete all backpack files from disk. */

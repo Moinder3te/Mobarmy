@@ -20,6 +20,10 @@ public class RandomizerManager {
     private final Map<String, BlockRandomizer> randomizers = new LinkedHashMap<>();
     /** Per-scope discovered block→item mapping for the Cheat Sheet. */
     private final Map<String, Map<Block, Item>> discovered = new HashMap<>();
+    /** Per-scope discovered item→item mapping for chest loot. */
+    private final Map<String, Map<Item, Item>> itemDiscovered = new HashMap<>();
+    /** Per-scope discovered item→item mapping for mob drops. */
+    private final Map<String, Map<Item, Item>> mobDiscovered = new HashMap<>();
     private long baseSeed;
 
     public RandomizerMode mode() { return mode; }
@@ -119,9 +123,29 @@ public class RandomizerManager {
         discovered.computeIfAbsent(scopeKey, k -> new LinkedHashMap<>()).put(block, item);
     }
 
+    /** Record that an item→item chest-loot swap was discovered. */
+    public void recordItemDiscovery(String scopeKey, Item original, Item mapped) {
+        itemDiscovered.computeIfAbsent(scopeKey, k -> new LinkedHashMap<>()).put(original, mapped);
+    }
+
     /** Get all discovered block→item mappings for a scope. */
     public Map<Block, Item> getDiscovered(String scopeKey) {
         return discovered.getOrDefault(scopeKey, Map.of());
+    }
+
+    /** Get all discovered item→item chest-loot mappings for a scope. */
+    public Map<Item, Item> getItemDiscovered(String scopeKey) {
+        return itemDiscovered.getOrDefault(scopeKey, Map.of());
+    }
+
+    /** Record that a mob-drop item→item swap was discovered. */
+    public void recordMobDiscovery(String scopeKey, Item original, Item mapped) {
+        mobDiscovered.computeIfAbsent(scopeKey, k -> new LinkedHashMap<>()).put(original, mapped);
+    }
+
+    /** Get all discovered item→item mob-drop mappings for a scope. */
+    public Map<Item, Item> getMobDiscovered(String scopeKey) {
+        return mobDiscovered.getOrDefault(scopeKey, Map.of());
     }
 
     public boolean hasAnyRandomizer() {
@@ -131,5 +155,7 @@ public class RandomizerManager {
     public void clear() {
         randomizers.clear();
         discovered.clear();
+        itemDiscovered.clear();
+        mobDiscovered.clear();
     }
 }

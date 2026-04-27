@@ -159,10 +159,17 @@ public class MobarmyMod implements ModInitializer {
         });
 
         // Prevent players from breaking arena structure blocks.
+        // In the arena dimension: block ALL breaks unless it's BATTLE phase
+        // AND the position is not a protected structure block.
+        // This prevents destruction when visiting the dimension outside of games.
         PlayerBlockBreakEvents.BEFORE.register((world, player, pos, state, be) -> {
             if (world.isClient()) return true;
-            if (ArenaProtection.isProtected(pos)) {
-                return false; // cancel the break
+            // Always protect ArenaProtection-tracked positions (any dimension).
+            if (ArenaProtection.isProtected(pos)) return false;
+            // In the arena dimension, only allow breaking during BATTLE phase.
+            if (world instanceof net.minecraft.server.world.ServerWorld sw
+                    && sw.getRegistryKey() == ArenaDimension.WORLD_KEY) {
+                return gameManager.isPhase(GamePhase.BATTLE);
             }
             return true;
         });

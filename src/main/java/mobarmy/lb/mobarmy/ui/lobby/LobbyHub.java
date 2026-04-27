@@ -115,8 +115,8 @@ public class LobbyHub implements NamedScreenHandlerFactory {
 
         inv.setStack(15, MenuUtils.button(Items.CLOCK,
             Text.literal("Einstellungen").formatted(Formatting.YELLOW, Formatting.BOLD),
-            Text.literal("Farm-Zeit, Anordnungs-Zeit,").formatted(Formatting.GRAY),
-            Text.literal("Respawn-Verzögerung").formatted(Formatting.GRAY)
+            Text.literal("Zeiten, Wellen, Mobs,").formatted(Formatting.GRAY),
+            Text.literal("Randomizer-Modus").formatted(Formatting.GRAY)
         ));
 
         // Bottom controls

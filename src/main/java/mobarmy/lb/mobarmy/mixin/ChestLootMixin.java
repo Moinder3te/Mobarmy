@@ -58,6 +58,8 @@ public abstract class ChestLootMixin {
         if (mod == null || mod.gameManager == null) return;
         if (!mod.gameManager.isPhase(GamePhase.FARM)) return;
 
+        if (!mod.config.chestRandomizerEnabled) return;
+
         ServerPlayerEntity sp = player instanceof ServerPlayerEntity spe ? spe : null;
         BlockRandomizer randomizer = mod.randomizerManager.getFor(sp);
         if (randomizer == null) return;
@@ -74,6 +76,16 @@ public abstract class ChestLootMixin {
             ItemStack swapped = mapped.copy();
             swapped.setCount(stack.getCount());
             inv.setStack(i, swapped);
+
+            if (sp != null) {
+                String scopeKey = mod.randomizerManager.scopeKey(sp);
+                // Block-based discovery (for block drops cheatsheet tab).
+                if (stack.getItem() instanceof net.minecraft.item.BlockItem bi) {
+                    mod.randomizerManager.recordDiscovery(scopeKey, bi.getBlock(), mapped.getItem());
+                }
+                // Item-based discovery (for chest loot cheatsheet tab).
+                mod.randomizerManager.recordItemDiscovery(scopeKey, stack.getItem(), mapped.getItem());
+            }
         }
     }
 }

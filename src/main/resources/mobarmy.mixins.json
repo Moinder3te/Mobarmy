@@ -7,7 +7,8 @@
     "BlockDropStackMixin",
     "ChestLootMixin",
     "EndermanTeleportMixin",
-    "ExplosionProtectionMixin"
+    "ExplosionProtectionMixin",
+    "MobDropMixin"
   ],
   "injectors": {
     "defaultRequire": 1

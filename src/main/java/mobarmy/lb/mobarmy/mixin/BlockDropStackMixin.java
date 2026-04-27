@@ -106,6 +106,7 @@ public abstract class BlockDropStackMixin {
         MobarmyMod mod = MobarmyMod.INSTANCE;
         if (mod == null || mod.gameManager == null) return;
         if (!mod.gameManager.isPhase(GamePhase.FARM)) return;
+        if (!mod.config.blockRandomizerEnabled) return;
         if (!mod.randomizerManager.has(state.getBlock())) return;
         int[] t = mobarmy$tracker.get();
         t[0] = 0; // start counting

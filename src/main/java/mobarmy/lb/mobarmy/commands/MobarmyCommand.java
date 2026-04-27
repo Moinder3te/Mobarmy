@@ -28,6 +28,15 @@ import net.minecraft.util.math.BlockPos;
 import java.util.concurrent.CompletableFuture;
 
 public class MobarmyCommand {
+    /** True if the command source has at least OP level 2 (gamemaster). */
+    private static boolean isOp(ServerCommandSource s) {
+        var perms = s.getPermissions();
+        if (perms instanceof net.minecraft.command.permission.LeveledPermissionPredicate lpp) {
+            return lpp.getLevel().isAtLeast(net.minecraft.command.permission.PermissionLevel.GAMEMASTERS);
+        }
+        return false;
+    }
+
     public static void register(CommandDispatcher<ServerCommandSource> d, MobarmyMod mod) {
         d.register(CommandManager.literal("mobarmy")
             .then(CommandManager.literal("menu").executes(ctx -> {
@@ -57,15 +66,15 @@ public class MobarmyCommand {
                 mobarmy.lb.mobarmy.ui.stats.StatsMenu.open(sp, gs);
                 return 1;
             }))
-            .then(CommandManager.literal("start").executes(ctx -> {
+            .then(CommandManager.literal("start").requires(MobarmyCommand::isOp).executes(ctx -> {
                 mod.gameManager.startGame(ctx.getSource().getServer());
                 return 1;
             }))
-            .then(CommandManager.literal("stop").executes(ctx -> {
+            .then(CommandManager.literal("stop").requires(MobarmyCommand::isOp).executes(ctx -> {
                 mod.gameManager.resetToLobby(ctx.getSource().getServer());
                 return 1;
             }))
-            .then(CommandManager.literal("skip").executes(ctx -> {
+            .then(CommandManager.literal("skip").requires(MobarmyCommand::isOp).executes(ctx -> {
                 // Force-advance to next phase
                 var gm = mod.gameManager;
                 var srv = ctx.getSource().getServer();
@@ -85,27 +94,27 @@ public class MobarmyCommand {
                 ctx.getSource().sendFeedback(() -> Text.literal("Phase: " + gm.phase() + " (" + gm.phaseTicksRemaining() / 20 + "s)").formatted(Formatting.AQUA), false);
                 return 1;
             }))
-            .then(CommandManager.literal("setlobby").executes(ctx -> setPos(ctx.getSource(), mod, "lobby")))
-            .then(CommandManager.literal("setspectator").executes(ctx -> setPos(ctx.getSource(), mod, "spectator")))
-            .then(CommandManager.literal("setspawn").then(CommandManager.literal("a").executes(ctx -> setPos(ctx.getSource(), mod, "spawnA")))
+            .then(CommandManager.literal("setlobby").requires(MobarmyCommand::isOp).executes(ctx -> setPos(ctx.getSource(), mod, "lobby")))
+            .then(CommandManager.literal("setspectator").requires(MobarmyCommand::isOp).executes(ctx -> setPos(ctx.getSource(), mod, "spectator")))
+            .then(CommandManager.literal("setspawn").requires(MobarmyCommand::isOp).then(CommandManager.literal("a").executes(ctx -> setPos(ctx.getSource(), mod, "spawnA")))
                                                     .then(CommandManager.literal("b").executes(ctx -> setPos(ctx.getSource(), mod, "spawnB"))))
-            .then(CommandManager.literal("setmobspawn").executes(ctx -> setPos(ctx.getSource(), mod, "mobs")))
-            .then(CommandManager.literal("setarena")
+            .then(CommandManager.literal("setmobspawn").requires(MobarmyCommand::isOp).executes(ctx -> setPos(ctx.getSource(), mod, "mobs")))
+            .then(CommandManager.literal("setarena").requires(MobarmyCommand::isOp)
                 .then(CommandManager.argument("which", IntegerArgumentType.integer(1, 2))
                     .executes(ctx -> setPos(ctx.getSource(), mod, "arena" + IntegerArgumentType.getInteger(ctx, "which")))))
-            .then(CommandManager.literal("buildarena").executes(ctx -> {
+            .then(CommandManager.literal("buildarena").requires(MobarmyCommand::isOp).executes(ctx -> {
                 new mobarmy.lb.mobarmy.arena.Arena(mod.config).build(ctx.getSource().getWorld());
                 ctx.getSource().sendFeedback(() -> Text.literal("Arena gebaut.").formatted(Formatting.GREEN), true);
                 return 1;
             }))
-            .then(CommandManager.literal("prepare")
+            .then(CommandManager.literal("prepare").requires(MobarmyCommand::isOp)
                 .then(CommandManager.argument("count", IntegerArgumentType.integer(1, 16))
                     .executes(ctx -> {
                         int n = IntegerArgumentType.getInteger(ctx, "count");
                         mod.gameManager.prepareArenas(ctx.getSource().getServer(), n);
                         return 1;
                     })))
-            .then(CommandManager.literal("save").executes(ctx -> {
+            .then(CommandManager.literal("save").requires(MobarmyCommand::isOp).executes(ctx -> {
                 mod.config.save(ctx.getSource().getServer());
                 ctx.getSource().sendFeedback(() -> Text.literal("Konfiguration gespeichert.").formatted(Formatting.GREEN), false);
                 return 1;
@@ -115,7 +124,7 @@ public class MobarmyCommand {
                 return 1;
             }))
             // ===== DEBUG: schnell Mobs in den Team-Pool füllen =====
-            .then(CommandManager.literal("debug")
+            .then(CommandManager.literal("debug").requires(MobarmyCommand::isOp)
                 .then(CommandManager.literal("givemob")
                     .then(CommandManager.argument("type", StringArgumentType.word())
                         .suggests(MOB_TYPE_SUGGESTIONS)

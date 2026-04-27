@@ -31,6 +31,10 @@ public class TeamCommand {
             .then(CommandManager.literal("remove")
                 .then(CommandManager.argument("name", StringArgumentType.word())
                     .executes(ctx -> {
+                        if (mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.LOBBY && mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.END) {
+                            ctx.getSource().sendFeedback(() -> Text.literal("Teams können nur in der Lobby geändert werden.").formatted(Formatting.RED), false);
+                            return 0;
+                        }
                         boolean ok = mod.teams.remove(StringArgumentType.getString(ctx, "name"));
                         ctx.getSource().sendFeedback(() -> Text.literal(ok ? "Team gelöscht." : "Nicht gefunden.").formatted(ok ? Formatting.GREEN : Formatting.RED), false);
                         return 1;
@@ -39,6 +43,10 @@ public class TeamCommand {
     }
 
     private static int create(ServerCommandSource s, MobarmyMod mod, String name, String colorName) {
+        if (mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.LOBBY && mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.END) {
+            s.sendFeedback(() -> Text.literal("Teams können nur in der Lobby geändert werden.").formatted(Formatting.RED), false);
+            return 0;
+        }
         Formatting f = Formatting.byName(colorName);
         if (f == null || !f.isColor()) f = Formatting.WHITE;
         Team t = mod.teams.create(name, f);
@@ -52,6 +60,10 @@ public class TeamCommand {
     }
 
     private static int join(ServerCommandSource s, MobarmyMod mod, String name) {
+        if (mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.LOBBY && mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.END) {
+            s.sendFeedback(() -> Text.literal("Teams können nur in der Lobby geändert werden.").formatted(Formatting.RED), false);
+            return 0;
+        }
         ServerPlayerEntity p = s.getPlayer();
         if (p == null) return 0;
         if (mod.teams.join(p, name)) {
@@ -63,6 +75,10 @@ public class TeamCommand {
     }
 
     private static int leave(ServerCommandSource s, MobarmyMod mod) {
+        if (mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.LOBBY && mod.gameManager.phase() != mobarmy.lb.mobarmy.game.GamePhase.END) {
+            s.sendFeedback(() -> Text.literal("Teams können nur in der Lobby geändert werden.").formatted(Formatting.RED), false);
+            return 0;
+        }
         ServerPlayerEntity p = s.getPlayer();
         if (p == null) return 0;
         mod.teams.leave(p);

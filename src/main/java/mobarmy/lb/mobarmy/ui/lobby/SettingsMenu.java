@@ -79,6 +79,11 @@ public class SettingsMenu implements NamedScreenHandlerFactory {
             // Randomizer mode toggle (header)
             case 7 -> cycleMode(+1, p);
 
+            // Randomizer type toggles (header row)
+            case 1 -> { mod.config.blockRandomizerEnabled = !mod.config.blockRandomizerEnabled; mod.config.save(mod.server); }
+            case 2 -> { mod.config.chestRandomizerEnabled = !mod.config.chestRandomizerEnabled; mod.config.save(mod.server); }
+            case 3 -> { mod.config.mobRandomizerEnabled = !mod.config.mobRandomizerEnabled; mod.config.save(mod.server); }
+
             case 53 -> LobbyHub.open(p, mod); // back
             default -> {}
         }
@@ -139,6 +144,14 @@ public class SettingsMenu implements NamedScreenHandlerFactory {
             Text.literal("Klicke zum Wechseln").formatted(Formatting.DARK_GRAY)
         )));
 
+        // Randomizer type toggles (header row, slots 1-3)
+        inv.setStack(1, toggleButton(Items.DIAMOND_PICKAXE,
+            "⛏ Block-Drops", mod.config.blockRandomizerEnabled));
+        inv.setStack(2, toggleButton(Items.CHEST,
+            "📦 Chest-Loot", mod.config.chestRandomizerEnabled));
+        inv.setStack(3, toggleButton(Items.BEEF,
+            "🐄 Mob-Drops", mod.config.mobRandomizerEnabled));
+
         // Row 1: Farm
         slider(inv, 9,
             Items.WHEAT,
@@ -182,6 +195,17 @@ public class SettingsMenu implements NamedScreenHandlerFactory {
         // Back button (slot 53, far right of row 5)
         inv.setStack(53, MenuUtils.button(Items.ARROW,
             Text.literal("← Zurück").formatted(Formatting.GRAY)));
+    }
+
+    private ItemStack toggleButton(net.minecraft.item.Item icon, String label, boolean enabled) {
+        Formatting color = enabled ? Formatting.GREEN : Formatting.RED;
+        String status = enabled ? "AN" : "AUS";
+        ItemStack stack = new ItemStack(enabled ? Items.LIME_CONCRETE : Items.RED_CONCRETE);
+        return MenuUtils.named(stack,
+            Text.literal(label).formatted(color, Formatting.BOLD),
+            Text.literal("Status: " + status).formatted(color),
+            Text.literal("Klick zum Umschalten").formatted(Formatting.DARK_GRAY)
+        );
     }
 
     private void slider(SimpleInventory inv, int rowStart, net.minecraft.item.Item icon,

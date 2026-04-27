@@ -66,8 +66,9 @@ public final class ArenaDimension {
             // --- Combat / arena rules ---
             gr.setValue(GameRules.DO_MOB_GRIEFING, false, s);
             gr.setValue(GameRules.DO_TILE_DROPS, false, s);
-            gr.setValue(GameRules.KEEP_INVENTORY, true, s);
-            gr.setValue(GameRules.DO_IMMEDIATE_RESPAWN, true, s);
+            // NOTE: KEEP_INVENTORY and DO_IMMEDIATE_RESPAWN are global (not
+            // per-dimension) and are toggled by GameManager at BATTLE start/end
+            // so they don't leak into the overworld during FARM phase.
             // --- Mob anger persistence ---
             // Mobs stay angry even after a player dies and respawns.
             gr.setValue(GameRules.FORGIVE_DEAD_PLAYERS, false, s);

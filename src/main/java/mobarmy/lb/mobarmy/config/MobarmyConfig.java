@@ -56,6 +56,10 @@ public class MobarmyConfig {
     public RandomizerMode randomizerMode = RandomizerMode.GLOBAL;
     public boolean buildArenaOnStart = true;
 
+    public boolean blockRandomizerEnabled = true;
+    public boolean chestRandomizerEnabled = true;
+    public boolean mobRandomizerEnabled = true;
+
     public static class BlockPosJson {
         public int x, y, z;
         public BlockPosJson() {}
